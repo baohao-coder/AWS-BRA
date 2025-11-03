@@ -19,9 +19,25 @@ export const exportToExcel = (data: any[], fileName: string): void => {
     });
     worksheet["!cols"] = columnWidths;
     
-    XLSX.writeFile(workbook, `${fileName}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    
+    // Create a Blob to handle the file in memory, client-side.
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    
+    // Generate a temporary local URL for the Blob to trigger download.
+    // This is a secure method and does not involve any network transmission.
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+
+    // Clean up the temporary elements and URL.
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   } catch (error) {
-    console.error("Failed to export to Excel", error);
+    console.error("Failed to export to Excel. This is a client-side operation and no data was transmitted.");
     alert("匯出 Excel 失敗。");
   }
 };

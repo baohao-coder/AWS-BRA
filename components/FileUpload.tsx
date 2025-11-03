@@ -5,9 +5,11 @@ interface FileUploadProps {
   onFilesSelected: (files: FileList) => void;
   isLoading: boolean;
   progress: number;
+  isAnonymizationEnabled: boolean;
+  onAnonymizationChange: (enabled: boolean) => void;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFilesSelected, isLoading, progress }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFilesSelected, isLoading, progress, isAnonymizationEnabled, onAnonymizationChange }) => {
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +97,18 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesSelected, isLoading, pro
               <input id="dropzone-file" type="file" className="hidden" multiple accept=".xlsx, .xls" onChange={handleChange} />
             </label>
           </form>
+          <div className="mt-4 flex items-center justify-center">
+            <input
+              type="checkbox"
+              id="anonymize-data"
+              checked={isAnonymizationEnabled}
+              onChange={(e) => onAnonymizationChange(e.target.checked)}
+              className="w-4 h-4 text-blue-600 bg-gray-600 border-gray-500 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="anonymize-data" className="ml-2 text-sm font-medium text-gray-300">
+              啟用資料匿名化 (遮蔽帳號、產品與用量等敏感資訊)
+            </label>
+          </div>
         </>
       )}
     </div>

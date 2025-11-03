@@ -12,6 +12,7 @@ type Tab = 'dashboard' | 'query' | 'top20';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [isAnonymizationEnabled, setIsAnonymizationEnabled] = useState(false);
   const { 
     billingData, 
     isLoading, 
@@ -22,10 +23,10 @@ const App: React.FC = () => {
 
   const handleFilesSelected = useCallback(async (files: FileList | null) => {
     if (files) {
-      await processFiles(files);
+      await processFiles(files, { anonymize: isAnonymizationEnabled });
       setActiveTab('dashboard');
     }
-  }, [processFiles]);
+  }, [processFiles, isAnonymizationEnabled]);
 
   const renderContent = () => {
     if (isLoading) {
@@ -86,7 +87,9 @@ const App: React.FC = () => {
         <FileUpload 
           onFilesSelected={handleFilesSelected} 
           isLoading={isLoading} 
-          progress={progress} 
+          progress={progress}
+          isAnonymizationEnabled={isAnonymizationEnabled}
+          onAnonymizationChange={setIsAnonymizationEnabled}
         />
         
         <PrivacyNotice />

@@ -18,11 +18,40 @@ export const useExcelProcessor = () => {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const processFiles = useCallback(async (files: FileList) => {
+  const processFiles = useCallback(async (files: FileList, options?: { anonymize?: boolean }) => {
     setIsLoading(true);
     setError(null);
     setBillingData([]);
     setProgress(0);
+
+    const anonymize = options?.anonymize ?? false;
+    const accountIdMap = new Map<string, string>();
+    const accountNameMap = new Map<string, string>();
+    const productNameMap = new Map<string, string>();
+    const usageTypeMap = new Map<string, string>();
+    const itemDescMap = new Map<string, string>();
+
+    const MAX_FILE_SIZE_MB = 20;
+    const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+    const ALLOWED_EXTENSIONS = ['.xlsx', '.xls'];
+
+    // Enhance file security by validating before processing.
+    for (const file of Array.from(files)) {
+      // 1. Validate file size to prevent browser crashes with excessively large files.
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        setError(`檔案 "${file.name}" 過大 (超過 ${MAX_FILE_SIZE_MB}MB)，為安全起見已拒絕處理。`);
+        setIsLoading(false);
+        return;
+      }
+      
+      // 2. Validate file extension to ensure it's a supported Excel format.
+      const fileExtension = `.${file.name.split('.').pop()?.toLowerCase()}`;
+      if (!ALLOWED_EXTENSIONS.includes(fileExtension)) {
+        setError(`檔案 "${file.name}" 的類型不支援。僅接受 .xlsx 和 .xls 檔案。`);
+        setIsLoading(false);
+        return;
+      }
+    }
 
     const allMonthlyData: MonthlyBillingData[] = [];
     const totalFiles = files.length;
@@ -53,10 +82,25 @@ export const useExcelProcessor = () => {
             const accountInfoRaw = json[0]?.[0] as string | null;
             if (!accountInfoRaw) continue;
 
-            const nameMatch = accountInfoRaw.match(/Account ID\s*:\s*(.*?)\s*\(/);
-            const idMatch = accountInfoRaw.match(/\((\d+)\)/);
-            const accountName = nameMatch ? nameMatch[1].trim() : 'Unknown';
-            const accountId = idMatch ? idMatch[1] : 'Unknown';
+            const originalNameMatch = accountInfoRaw.match(/Account ID\s*:\s*(.*?)\s*\(/);
+            const originalIdMatch = accountInfoRaw.match(/\((\d+)\)/);
+            const originalAccountName = originalNameMatch ? originalNameMatch[1].trim() : `Unknown Account ${j}`;
+            const originalAccountId = originalIdMatch ? originalIdMatch[1] : `Unknown_ID_${j}`;
+            
+            let accountId = originalAccountId;
+            let accountName = originalAccountName;
+
+            if (anonymize) {
+              if (!accountIdMap.has(originalAccountId)) {
+                accountIdMap.set(originalAccountId, `ACCOUNT-${accountIdMap.size + 1}`);
+              }
+              accountId = accountIdMap.get(originalAccountId)!;
+
+              if (!accountNameMap.has(originalAccountName)) {
+                accountNameMap.set(originalAccountName, `Account Name ${accountNameMap.size + 1}`);
+              }
+              accountName = accountNameMap.get(originalAccountName)!;
+            }
 
             const totalAmount = parseNumber(json[5]?.[4]);
             const currency = json[7]?.[4] as string || 'USD';
@@ -75,10 +119,17 @@ export const useExcelProcessor = () => {
                 if (isMergedAtoD) {
                     if (currentService) services.push(currentService);
 
-                    const serviceName = row[0] as string;
+                    let serviceName = row[0] as string;
                     if (serviceName?.toLowerCase().includes('taxes')) {
                         currentService = null;
                         continue;
+                    }
+                    
+                    if (anonymize && serviceName) {
+                      if (!productNameMap.has(serviceName)) {
+                        productNameMap.set(serviceName, `Product-${productNameMap.size + 1}`);
+                      }
+                      serviceName = productNameMap.get(serviceName)!;
                     }
 
                     currentService = {
@@ -87,10 +138,25 @@ export const useExcelProcessor = () => {
                         details: [],
                     };
                 } else if (currentService && row[0] !== 'UsageType' && !String(row[0]).toLowerCase().includes('taxes') && !String(row[1]).toLowerCase().includes('taxes')) {
+                    let usageType = String(row[0] || '');
+                    let itemDescription = String(row[1] || '');
+
+                    if (anonymize) {
+                      if (usageType && !usageTypeMap.has(usageType)) {
+                          usageTypeMap.set(usageType, `UsageType-${usageTypeMap.size + 1}`);
+                      }
+                      usageType = usageType ? usageTypeMap.get(usageType)! : '';
+
+                      if (itemDescription && !itemDescMap.has(itemDescription)) {
+                          itemDescMap.set(itemDescription, `Item-Desc-${itemDescMap.size + 1}`);
+                      }
+                      itemDescription = itemDescription ? itemDescMap.get(itemDescription)! : '';
+                    }
+
                     const detail: ServiceDetail = {
                         productName: currentService.productName,
-                        usageType: String(row[0] || ''),
-                        itemDescription: String(row[1] || ''),
+                        usageType,
+                        itemDescription,
                         unitPrice: parseNumber(row[2]),
                         usages: parseNumber(row[3]),
                         totalCost: parseNumber(row[4]),
@@ -123,7 +189,9 @@ export const useExcelProcessor = () => {
       setBillingData(allMonthlyData);
       setProgress(100);
     } catch (e) {
-      console.error("Error processing Excel files:", e);
+      // The error is intentionally not logged to the console to prevent any potential
+      // leakage of sensitive information from the file contents during a parsing failure.
+      // The user is notified of the error through the UI.
       setError("處理檔案時發生錯誤。請確認檔案格式是否正確。");
     } finally {
       setIsLoading(false);
