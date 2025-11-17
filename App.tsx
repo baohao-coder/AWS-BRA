@@ -4,11 +4,12 @@ import FileUpload from './components/FileUpload';
 import DashboardTab from './components/DashboardTab';
 import QueryTab from './components/QueryTab';
 import Top20Tab from './components/Top20Tab';
+import SiaReportTab from './components/SiaReportTab';
 import TabButton from './components/common/TabButton';
 import { useExcelProcessor } from './hooks/useExcelProcessor';
 import PrivacyNotice from './components/common/PrivacyNotice';
 
-type Tab = 'dashboard' | 'query' | 'top20';
+type Tab = 'dashboard' | 'query' | 'top20' | 'sia';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -65,12 +66,18 @@ const App: React.FC = () => {
               isActive={activeTab === 'top20'}
               onClick={() => setActiveTab('top20')}
             />
+             <TabButton
+              label="SIA Report"
+              isActive={activeTab === 'sia'}
+              onClick={() => setActiveTab('sia')}
+            />
           </nav>
         </div>
         <div>
           {activeTab === 'dashboard' && <DashboardTab data={billingData} />}
           {activeTab === 'query' && <QueryTab data={billingData} />}
           {activeTab === 'top20' && <Top20Tab data={billingData} />}
+          {activeTab === 'sia' && <SiaReportTab data={billingData} />}
         </div>
       </>
     );
