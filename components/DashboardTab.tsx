@@ -23,7 +23,6 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
   const sortedData = useMemo(() => [...data].sort((a, b) => a.month.localeCompare(b.month)), [data]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
 
-  // 狀態：月份選擇、展開的帳號、展開的產品、排序設定
   const [focusMonth, setFocusMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
   const [expandedProductKey, setExpandedProductKey] = useState<string | null>(null);
@@ -63,39 +62,25 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
     }));
   }, [sortedData]);
 
-  // 核心排序邏輯
   const sortedAccounts = useMemo(() => {
     const prevMonthIndex = months.indexOf(focusMonth) - 1;
     const prevMonth = prevMonthIndex >= 0 ? months[prevMonthIndex] : null;
 
     return [...perAccountChangesData].sort((a, b) => {
       let valA: any, valB: any;
-
       switch (sortConfig.key) {
-        case 'accountId':
-          valA = a.accountId;
-          valB = b.accountId;
-          break;
-        case 'accountName':
-          valA = a.accountName;
-          valB = b.accountName;
-          break;
-        case 'currentAmount':
-          valA = a.monthlyTotals[focusMonth] || 0;
-          valB = b.monthlyTotals[focusMonth] || 0;
-          break;
+        case 'accountId': valA = a.accountId; valB = b.accountId; break;
+        case 'accountName': valA = a.accountName; valB = b.accountName; break;
+        case 'currentAmount': valA = a.monthlyTotals[focusMonth] || 0; valB = b.monthlyTotals[focusMonth] || 0; break;
         case 'currentMom':
-          const currentA = a.monthlyTotals[focusMonth] || 0;
-          const prevA = prevMonth ? (a.monthlyTotals[prevMonth] || 0) : 0;
-          const currentB = b.monthlyTotals[focusMonth] || 0;
-          const prevB = prevMonth ? (b.monthlyTotals[prevMonth] || 0) : 0;
-          valA = currentA - prevA;
-          valB = currentB - prevB;
+          const curA = a.monthlyTotals[focusMonth] || 0;
+          const preA = prevMonth ? (a.monthlyTotals[prevMonth] || 0) : 0;
+          const curB = b.monthlyTotals[focusMonth] || 0;
+          const preB = prevMonth ? (b.monthlyTotals[prevMonth] || 0) : 0;
+          valA = curA - preA; valB = curB - preB;
           break;
-        default:
-          return 0;
+        default: return 0;
       }
-
       if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
       if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
@@ -122,11 +107,17 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
     const currentAccount = currentMonthData?.accounts.find(a => a.accountId === accountId);
     const prevAccount = prevMonthData?.accounts.find(a => a.accountId === accountId);
     const services = new Map<string, { current: number; prev: number }>();
-    currentAccount?.services.forEach(s => { services.set(s.productName, { current: s.totalCost, prev: 0 }); });
+    
+    currentAccount?.services.forEach(s => {
+      const existing = services.get(s.productName) || { current: 0, prev: 0 };
+      services.set(s.productName, { ...existing, current: existing.current + s.totalCost });
+    });
+    
     prevAccount?.services.forEach(s => {
       const existing = services.get(s.productName) || { current: 0, prev: 0 };
-      services.set(s.productName, { ...existing, prev: s.totalCost });
+      services.set(s.productName, { ...existing, prev: existing.prev + s.totalCost });
     });
+    
     return Array.from(services.entries())
       .map(([name, costs]) => ({ productName: name, currentCost: costs.current, prevCost: costs.prev, diff: costs.current - costs.prev }))
       .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
@@ -139,16 +130,31 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
     const prevMonthData = prevMonth ? sortedData.find(d => d.month === prevMonth) : null;
     const currentService = currentMonthData?.accounts.find(a => a.accountId === accountId)?.services.find(s => s.productName === productName);
     const prevService = prevMonthData?.accounts.find(a => a.accountId === accountId)?.services.find(s => s.productName === productName);
+    
     const usageMap = new Map<string, { currentUsage: number; prevUsage: number; currentCost: number; prevCost: number; usageType: string; itemDescription: string }>();
+    
+    // 彙總本月明細
     currentService?.details.forEach(d => {
       const key = `${d.usageType}|||${d.itemDescription}`;
-      usageMap.set(key, { currentUsage: d.usages, prevUsage: 0, currentCost: d.totalCost, prevCost: 0, usageType: d.usageType, itemDescription: d.itemDescription });
+      const existing = usageMap.get(key) || { currentUsage: 0, prevUsage: 0, currentCost: 0, prevCost: 0, usageType: d.usageType, itemDescription: d.itemDescription };
+      usageMap.set(key, { 
+        ...existing,
+        currentUsage: existing.currentUsage + d.usages,
+        currentCost: existing.currentCost + d.totalCost
+      });
     });
+
+    // 彙總上月明細
     prevService?.details.forEach(d => {
       const key = `${d.usageType}|||${d.itemDescription}`;
       const existing = usageMap.get(key) || { currentUsage: 0, prevUsage: 0, currentCost: 0, prevCost: 0, usageType: d.usageType, itemDescription: d.itemDescription };
-      usageMap.set(key, { ...existing, prevUsage: d.usages, prevCost: d.totalCost });
+      usageMap.set(key, {
+        ...existing,
+        prevUsage: existing.prevUsage + d.usages,
+        prevCost: existing.prevCost + d.totalCost
+      });
     });
+    
     return Array.from(usageMap.values()).sort((a, b) => Math.abs(b.currentCost - b.prevCost) - Math.abs(a.currentCost - a.prevCost));
   };
 
@@ -294,7 +300,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                                 <div className="rounded-lg overflow-hidden border border-gray-700 bg-gray-800 shadow-2xl">
                                     <div className="px-4 py-2 border-b border-gray-700 bg-gray-750 flex justify-between items-center text-xs">
                                         <span className="font-semibold text-blue-400 uppercase tracking-tight">{account.accountName} 費用明細 - {focusMonth}</span>
-                                        <span className="text-gray-500">點擊產品名稱展開 Usage Type 細節</span>
+                                        <span className="text-gray-500">點擊產品名稱展開 Usage Type 細節 (已依說明自動彙總)</span>
                                     </div>
                                     <table className="w-full text-xs text-left">
                                         <thead className="bg-gray-700 text-gray-300 uppercase">
@@ -336,10 +342,10 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                                                                             <thead className="text-gray-500 border-b border-gray-800 font-bold uppercase tracking-wider">
                                                                                 <tr>
                                                                                     <th className="pb-1 text-left">Usage Type / Item Description</th>
-                                                                                    <th className="pb-1 text-right">上月用量</th>
-                                                                                    <th className="pb-1 text-right">本月用量</th>
+                                                                                    <th className="pb-1 text-right">上月總用量</th>
+                                                                                    <th className="pb-1 text-right">本月總用量</th>
                                                                                     <th className="pb-1 text-right">用量變動</th>
-                                                                                    <th className="pb-1 text-right">本月費用</th>
+                                                                                    <th className="pb-1 text-right">本月總費用</th>
                                                                                     <th className="pb-1 text-right">費用變動</th>
                                                                                 </tr>
                                                                             </thead>

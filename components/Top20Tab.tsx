@@ -183,28 +183,51 @@ const Top20Tab: React.FC<Top20TabProps> = ({ data }) => {
     const prevService = prevMonthData?.accounts.find(a => a.accountId === accountId)?.services.find(s => s.productName === productName);
 
     const currentDetails = currentService?.details || [];
-    
-    const prevDetailsMap = new Map<string, ServiceDetail>();
-    (prevService?.details || []).forEach(d => prevDetailsMap.set(`${d.usageType}#${d.itemDescription}`, d));
+    const prevDetails = prevService?.details || [];
+
+    // 聚合本月明細
+    const currentAggregated = new Map<string, { usages: number; totalCost: number; usageType: string; itemDescription: string }>();
+    currentDetails.forEach(d => {
+        const key = `${d.usageType}#${d.itemDescription}`;
+        const existing = currentAggregated.get(key) || { usages: 0, totalCost: 0, usageType: d.usageType, itemDescription: d.itemDescription };
+        currentAggregated.set(key, {
+            ...existing,
+            usages: existing.usages + d.usages,
+            totalCost: existing.totalCost + d.totalCost
+        });
+    });
+
+    // 聚合上月明細
+    const prevAggregated = new Map<string, { usages: number; totalCost: number; usageType: string; itemDescription: string }>();
+    prevDetails.forEach(d => {
+        const key = `${d.usageType}#${d.itemDescription}`;
+        const existing = prevAggregated.get(key) || { usages: 0, totalCost: 0, usageType: d.usageType, itemDescription: d.itemDescription };
+        prevAggregated.set(key, {
+            ...existing,
+            usages: existing.usages + d.usages,
+            totalCost: existing.totalCost + d.totalCost
+        });
+    });
+
+    const relevantKeys = new Set<string>();
+    currentAggregated.forEach((_, key) => relevantKeys.add(key));
+    prevAggregated.forEach((_, key) => relevantKeys.add(key));
     
     const changes: UsageDetailChange[] = [];
 
-    const relevantKeys = new Set<string>();
-    currentDetails.forEach(d => relevantKeys.add(`${d.usageType}#${d.itemDescription}`));
-    prevDetailsMap.forEach((_, key) => relevantKeys.add(key));
-
     for (const key of relevantKeys) {
-        const [usageType, itemDescription] = key.split('#');
+        const currentData = currentAggregated.get(key) || { usages: 0, totalCost: 0, usageType: '', itemDescription: '' };
+        const prevData = prevAggregated.get(key) || { usages: 0, totalCost: 0, usageType: '', itemDescription: '' };
         
-        const currentDetail = currentDetails.find(d => `${d.usageType}#${d.itemDescription}` === key);
-        const prevDetail = prevDetailsMap.get(key);
+        const usageType = currentData.usageType || prevData.usageType;
+        const itemDescription = currentData.itemDescription || prevData.itemDescription;
 
-        const previousTotalCost = prevDetail?.totalCost || 0;
-        const currentTotalCost = currentDetail?.totalCost || 0;
+        const previousTotalCost = prevData.totalCost;
+        const currentTotalCost = currentData.totalCost;
         const totalCostMom = currentTotalCost - previousTotalCost;
 
-        const previousUsages = prevDetail?.usages || 0;
-        const currentUsages = currentDetail?.usages || 0;
+        const previousUsages = prevData.usages;
+        const currentUsages = currentData.usages;
         const usagesMom = currentUsages - previousUsages;
         
         changes.push({
@@ -316,34 +339,50 @@ const Top20Tab: React.FC<Top20TabProps> = ({ data }) => {
 
             if (exportHierarchy === 'product') return;
 
-            // --- Usage Level ---
+            // --- Usage Level (含聚合邏輯) ---
             const currentDetails = currentService?.details || [];
-            const prevDetailsMap = new Map<string, ServiceDetail>((prevService?.details || []).map(d => [`${d.usageType}#${d.itemDescription}`, d]));
-            const allDetailKeys = new Set([...currentDetails.map(d => `${d.usageType}#${d.itemDescription}`), ...prevDetailsMap.keys()]);
+            const prevDetails = prevService?.details || [];
+
+            const currentAggregated = new Map<string, any>();
+            currentDetails.forEach(d => {
+                const key = `${d.usageType}#${d.itemDescription}`;
+                const existing = currentAggregated.get(key) || { usages: 0, cost: 0, usageType: d.usageType, itemDesc: d.itemDescription };
+                currentAggregated.set(key, { ...existing, usages: existing.usages + d.usages, cost: existing.cost + d.totalCost });
+            });
+
+            const prevAggregated = new Map<string, any>();
+            prevDetails.forEach(d => {
+                const key = `${d.usageType}#${d.itemDescription}`;
+                const existing = prevAggregated.get(key) || { usages: 0, cost: 0, usageType: d.usageType, itemDesc: d.itemDescription };
+                prevAggregated.set(key, { ...existing, usages: existing.usages + d.usages, cost: existing.cost + d.totalCost });
+            });
+
+            const allDetailKeys = new Set([...currentAggregated.keys(), ...prevAggregated.keys()]);
 
             allDetailKeys.forEach(key => {
-                const [usageType, itemDescription] = key.split('#');
-                const currentDetail = currentDetails.find(d => `${d.usageType}#${d.itemDescription}` === key);
-                const prevDetail = prevDetailsMap.get(key);
+                const cur = currentAggregated.get(key);
+                const pre = prevAggregated.get(key);
+                
+                const uType = cur?.usageType || pre?.usageType || '';
+                const iDesc = cur?.itemDesc || pre?.itemDesc || '';
+                const pCost = pre?.cost || 0;
+                const cCost = cur?.cost || 0;
+                const pUsage = pre?.usages || 0;
+                const cUsage = cur?.usages || 0;
 
-                const previousTotalCost = prevDetail?.totalCost || 0;
-                const currentTotalCost = currentDetail?.totalCost || 0;
-                const totalCostMom = currentTotalCost - previousTotalCost;
-
-                const previousUsages = prevDetail?.usages || 0;
-                const currentUsages = currentDetail?.usages || 0;
-                const usagesMom = currentUsages - previousUsages;
+                const totalCostMom = cCost - pCost;
+                const usagesMom = cUsage - pUsage;
 
                 if (totalCostMom !== 0 || usagesMom !== 0) {
                     exportData.push({
                         'Hierarchy': '    Usage',
-                        'Name': usageType,
-                        'Description': itemDescription,
-                        [`${prevMonthHeader} Usages`]: previousUsages,
-                        [`${currentMonthHeader} Usages`]: currentUsages,
+                        'Name': uType,
+                        'Description': iDesc,
+                        [`${prevMonthHeader} Usages`]: pUsage,
+                        [`${currentMonthHeader} Usages`]: cUsage,
                         'MoM Usages': usagesMom,
-                        [`${prevMonthHeader} Cost (USD)`]: previousTotalCost.toFixed(2),
-                        [`${currentMonthHeader} Cost (USD)`]: currentTotalCost.toFixed(2),
+                        [`${prevMonthHeader} Cost (USD)`]: pCost.toFixed(2),
+                        [`${currentMonthHeader} Cost (USD)`]: cCost.toFixed(2),
                         'MoM Cost (USD)': totalCostMom.toFixed(2),
                     });
                 }
@@ -494,7 +533,7 @@ const Top20Tab: React.FC<Top20TabProps> = ({ data }) => {
                                                 <tr className="bg-gray-900">
                                                     <td colSpan={4} className="p-4 bg-gray-950">
                                                         <div className="flex justify-between items-center mb-2">
-                                                            <h5 className="text-md font-semibold text-white">使用類型明細比較</h5>
+                                                            <h5 className="text-md font-semibold text-white">使用類型明細比較 (已按說明加總)</h5>
                                                         </div>
                                                         <div className="overflow-x-auto max-h-60">
                                                             <table className="w-full text-sm">
@@ -633,7 +672,7 @@ const Top20Tab: React.FC<Top20TabProps> = ({ data }) => {
                 </div>
             </div>
         </div>
-        <p className="px-6 pb-2 text-gray-400 text-sm">點擊任一帳號列以展開產品明細，再點擊產品列以展開用量明細。</p>
+        <p className="px-6 pb-2 text-gray-400 text-sm">點擊任一帳號列以展開產品明細，再點擊產品列以展開用量明細 (相同項目已彙總)。</p>
         <AccountChangeTable accounts={top20ByMonthData} isExpandable={true} displayMode="all" showCumulativeTotal={false} />
       </Card>
     </div>
