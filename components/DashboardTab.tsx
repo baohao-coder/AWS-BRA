@@ -19,6 +19,10 @@ const formatNumber = (value: number, decimals: number = 2) => {
 type SortKey = 'accountId' | 'accountName' | 'currentAmount' | 'currentMom';
 type SortDirection = 'asc' | 'desc';
 
+// 二三階排序類型定義
+type ProductSortKey = 'productName' | 'currentCost' | 'diff';
+type UsageSortKey = 'description' | 'currentCost' | 'costDiff';
+
 const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
   const sortedData = useMemo(() => [...data].sort((a, b) => a.month.localeCompare(b.month)), [data]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
@@ -26,8 +30,18 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
   const [focusMonth, setFocusMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
   const [expandedProductKey, setExpandedProductKey] = useState<string | null>(null);
+  
+  // 排序狀態
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection }>({
     key: 'currentAmount',
+    direction: 'desc'
+  });
+  const [productSortConfig, setProductSortConfig] = useState<{ key: ProductSortKey; direction: SortDirection }>({
+    key: 'diff',
+    direction: 'desc'
+  });
+  const [usageSortConfig, setUsageSortConfig] = useState<{ key: UsageSortKey; direction: SortDirection }>({
+    key: 'costDiff',
     direction: 'desc'
   });
 
@@ -94,9 +108,23 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
     }));
   };
 
-  const getSortIcon = (key: SortKey) => {
-    if (sortConfig.key !== key) return '↕';
-    return sortConfig.direction === 'asc' ? '↑' : '↓';
+  const handleProductSort = (key: ProductSortKey) => {
+    setProductSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+    }));
+  };
+
+  const handleUsageSort = (key: UsageSortKey) => {
+    setUsageSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+    }));
+  };
+
+  const getSortIcon = (currentKey: any, targetKey: any, direction: SortDirection) => {
+    if (currentKey !== targetKey) return '↕';
+    return direction === 'asc' ? '↑' : '↓';
   };
 
   const getAccountServiceDetails = (accountId: string) => {
@@ -120,7 +148,18 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
     
     return Array.from(services.entries())
       .map(([name, costs]) => ({ productName: name, currentCost: costs.current, prevCost: costs.prev, diff: costs.current - costs.prev }))
-      .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+      .sort((a, b) => {
+        let valA: any, valB: any;
+        switch (productSortConfig.key) {
+          case 'productName': valA = a.productName; valB = b.productName; break;
+          case 'currentCost': valA = a.currentCost; valB = b.currentCost; break;
+          case 'diff': valA = a.diff; valB = b.diff; break;
+          default: return 0;
+        }
+        if (valA < valB) return productSortConfig.direction === 'asc' ? -1 : 1;
+        if (valA > valB) return productSortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
   };
 
   const getServiceUsageDetails = (accountId: string, productName: string) => {
@@ -133,7 +172,6 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
     
     const usageMap = new Map<string, { currentUsage: number; prevUsage: number; currentCost: number; prevCost: number; usageType: string; itemDescription: string }>();
     
-    // 彙總本月明細
     currentService?.details.forEach(d => {
       const key = `${d.usageType}|||${d.itemDescription}`;
       const existing = usageMap.get(key) || { currentUsage: 0, prevUsage: 0, currentCost: 0, prevCost: 0, usageType: d.usageType, itemDescription: d.itemDescription };
@@ -144,7 +182,6 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
       });
     });
 
-    // 彙總上月明細
     prevService?.details.forEach(d => {
       const key = `${d.usageType}|||${d.itemDescription}`;
       const existing = usageMap.get(key) || { currentUsage: 0, prevUsage: 0, currentCost: 0, prevCost: 0, usageType: d.usageType, itemDescription: d.itemDescription };
@@ -155,7 +192,21 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
       });
     });
     
-    return Array.from(usageMap.values()).sort((a, b) => Math.abs(b.currentCost - b.prevCost) - Math.abs(a.currentCost - a.prevCost));
+    return Array.from(usageMap.values()).sort((a, b) => {
+      let valA: any, valB: any;
+      switch (usageSortConfig.key) {
+        case 'description': 
+          valA = `${a.usageType} ${a.itemDescription}`; 
+          valB = `${b.usageType} ${b.itemDescription}`; 
+          break;
+        case 'currentCost': valA = a.currentCost; valB = b.currentCost; break;
+        case 'costDiff': valA = a.currentCost - a.prevCost; valB = b.currentCost - b.prevCost; break;
+        default: return 0;
+      }
+      if (valA < valB) return usageSortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return usageSortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
   };
 
   const handleExport = () => {
@@ -210,7 +261,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                 </select>
             </div>
             <span className="text-xs text-gray-400">
-                點擊表頭 <span className="text-blue-400 font-bold">Account ID</span>、<span className="text-blue-400 font-bold">Account Name</span> 或 <span className="text-blue-400 font-bold">基準月({focusMonth})</span> 的金額/MoM 即可排序。
+                點擊各層級表頭 <span className="text-blue-400 font-bold">↑↓</span> 即可自定義排序。
             </span>
         </div>
         
@@ -220,12 +271,12 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
               <tr>
                 <th scope="col" className="px-4 py-3 cursor-pointer hover:bg-gray-600 transition-colors" onClick={() => handleSort('accountId')}>
                   <div className="flex items-center">
-                    Account ID <span className={`ml-1 ${sortConfig.key === 'accountId' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon('accountId')}</span>
+                    Account ID <span className={`ml-1 ${sortConfig.key === 'accountId' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(sortConfig.key, 'accountId', sortConfig.direction)}</span>
                   </div>
                 </th>
                 <th scope="col" className="px-4 py-3 cursor-pointer hover:bg-gray-600 transition-colors" onClick={() => handleSort('accountName')}>
                   <div className="flex items-center">
-                    Account Name <span className={`ml-1 ${sortConfig.key === 'accountName' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon('accountName')}</span>
+                    Account Name <span className={`ml-1 ${sortConfig.key === 'accountName' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(sortConfig.key, 'accountName', sortConfig.direction)}</span>
                   </div>
                 </th>
                 {months.map((month, index) => {
@@ -239,7 +290,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                         >
                             <div className="flex items-center justify-end">
                                 {month} (USD)
-                                {isFocused && <span className={`ml-1 ${sortConfig.key === 'currentAmount' ? 'text-blue-400' : 'text-blue-200/50'}`}>{getSortIcon('currentAmount')}</span>}
+                                {isFocused && <span className={`ml-1 ${sortConfig.key === 'currentAmount' ? 'text-blue-400' : 'text-blue-200/50'}`}>{getSortIcon(sortConfig.key, 'currentAmount', sortConfig.direction)}</span>}
                             </div>
                         </th>
                         {index > 0 && (
@@ -250,7 +301,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                             >
                                 <div className="flex items-center justify-end">
                                     MoM (USD)
-                                    {isFocused && <span className={`ml-1 ${sortConfig.key === 'currentMom' ? 'text-blue-400' : 'text-blue-200/50'}`}>{getSortIcon('currentMom')}</span>}
+                                    {isFocused && <span className={`ml-1 ${sortConfig.key === 'currentMom' ? 'text-blue-400' : 'text-blue-200/50'}`}>{getSortIcon(sortConfig.key, 'currentMom', sortConfig.direction)}</span>}
                                 </div>
                             </th>
                         )}
@@ -300,15 +351,27 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                                 <div className="rounded-lg overflow-hidden border border-gray-700 bg-gray-800 shadow-2xl">
                                     <div className="px-4 py-2 border-b border-gray-700 bg-gray-750 flex justify-between items-center text-xs">
                                         <span className="font-semibold text-blue-400 uppercase tracking-tight">{account.accountName} 費用明細 - {focusMonth}</span>
-                                        <span className="text-gray-500">點擊產品名稱展開 Usage Type 細節 (已依說明自動彙總)</span>
+                                        <span className="text-gray-500 italic">點擊表頭排序產品</span>
                                     </div>
                                     <table className="w-full text-xs text-left">
                                         <thead className="bg-gray-700 text-gray-300 uppercase">
                                             <tr>
-                                                <th className="px-4 py-2">產品名稱 (Product)</th>
+                                                <th className="px-4 py-2 cursor-pointer hover:bg-gray-600" onClick={(e) => { e.stopPropagation(); handleProductSort('productName'); }}>
+                                                    <div className="flex items-center">
+                                                        產品名稱 (Product) <span className={`ml-1 ${productSortConfig.key === 'productName' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(productSortConfig.key, 'productName', productSortConfig.direction)}</span>
+                                                    </div>
+                                                </th>
                                                 <th className="px-4 py-2 text-right">上月費用</th>
-                                                <th className="px-4 py-2 text-right">本月費用</th>
-                                                <th className="px-4 py-2 text-right">變動值 (MoM)</th>
+                                                <th className="px-4 py-2 text-right cursor-pointer hover:bg-gray-600" onClick={(e) => { e.stopPropagation(); handleProductSort('currentCost'); }}>
+                                                    <div className="flex items-center justify-end">
+                                                        本月費用 <span className={`ml-1 ${productSortConfig.key === 'currentCost' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(productSortConfig.key, 'currentCost', productSortConfig.direction)}</span>
+                                                    </div>
+                                                </th>
+                                                <th className="px-4 py-2 text-right cursor-pointer hover:bg-gray-600" onClick={(e) => { e.stopPropagation(); handleProductSort('diff'); }}>
+                                                    <div className="flex items-center justify-end">
+                                                        變動值 (MoM) <span className={`ml-1 ${productSortConfig.key === 'diff' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(productSortConfig.key, 'diff', productSortConfig.direction)}</span>
+                                                    </div>
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -341,12 +404,24 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                                                                         <table className="w-full text-[11px]">
                                                                             <thead className="text-gray-500 border-b border-gray-800 font-bold uppercase tracking-wider">
                                                                                 <tr>
-                                                                                    <th className="pb-1 text-left">Usage Type / Item Description</th>
+                                                                                    <th className="pb-1 text-left cursor-pointer hover:text-blue-400" onClick={(e) => { e.stopPropagation(); handleUsageSort('description'); }}>
+                                                                                       <div className="flex items-center">
+                                                                                            Usage Type / Item Description <span className={`ml-1 ${usageSortConfig.key === 'description' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(usageSortConfig.key, 'description', usageSortConfig.direction)}</span>
+                                                                                       </div>
+                                                                                    </th>
                                                                                     <th className="pb-1 text-right">上月總用量</th>
                                                                                     <th className="pb-1 text-right">本月總用量</th>
                                                                                     <th className="pb-1 text-right">用量變動</th>
-                                                                                    <th className="pb-1 text-right">本月總費用</th>
-                                                                                    <th className="pb-1 text-right">費用變動</th>
+                                                                                    <th className="pb-1 text-right cursor-pointer hover:text-blue-400" onClick={(e) => { e.stopPropagation(); handleUsageSort('currentCost'); }}>
+                                                                                        <div className="flex items-center justify-end">
+                                                                                            本月總費用 <span className={`ml-1 ${usageSortConfig.key === 'currentCost' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(usageSortConfig.key, 'currentCost', usageSortConfig.direction)}</span>
+                                                                                        </div>
+                                                                                    </th>
+                                                                                    <th className="pb-1 text-right cursor-pointer hover:text-blue-400" onClick={(e) => { e.stopPropagation(); handleUsageSort('costDiff'); }}>
+                                                                                        <div className="flex items-center justify-end">
+                                                                                            費用變動 <span className={`ml-1 ${usageSortConfig.key === 'costDiff' ? 'text-blue-400' : 'text-gray-500'}`}>{getSortIcon(usageSortConfig.key, 'costDiff', usageSortConfig.direction)}</span>
+                                                                                        </div>
+                                                                                    </th>
                                                                                 </tr>
                                                                             </thead>
                                                                             <tbody>
