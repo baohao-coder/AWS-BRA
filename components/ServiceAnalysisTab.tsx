@@ -9,7 +9,6 @@ interface ServiceAnalysisTabProps {
   data: BillingData;
 }
 
-// Define local interfaces for complex structures to help TypeScript inference
 interface ProductAccountSummary {
   accountId: string;
   accountName: string;
@@ -40,11 +39,13 @@ const formatNumber = (value: number, decimals: number = 2) => {
 
 type ProductSortKey = 'name' | 'totalCost';
 type SortDirection = 'asc' | 'desc';
+type AnalysisMode = 'monthly' | 'cumulative';
 
 const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const sortedData = useMemo(() => [...data].sort((a, b) => a.month.localeCompare(b.month)), [data]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
   
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedProductName, setExpandedProductName] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: ProductSortKey; direction: SortDirection }>({
@@ -53,45 +54,51 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   });
 
   const productAnalysis = useMemo(() => {
-    const monthData = sortedData.find(d => d.month === selectedMonth);
-    if (!monthData) return [];
+    // 根據模式選擇要處理的資料源
+    const dataToProcess = analysisMode === 'monthly' 
+      ? sortedData.filter(d => d.month === selectedMonth)
+      : sortedData;
+
+    if (dataToProcess.length === 0) return [];
 
     const productMap = new Map<string, ProductSummary>();
 
-    monthData.accounts.forEach(account => {
-      account.services.forEach(service => {
-        if (!productMap.has(service.productName)) {
-          productMap.set(service.productName, {
-            productName: service.productName,
-            totalCost: 0,
-            accounts: new Map<string, ProductAccountSummary>(),
-            details: new Map<string, ProductDetailSummary>()
-          });
-        }
-        
-        const p = productMap.get(service.productName)!;
-        p.totalCost += service.totalCost;
-
-        // 帳號佔比統計
-        if (!p.accounts.has(account.accountId)) {
-          p.accounts.set(account.accountId, { accountId: account.accountId, accountName: account.accountName, cost: 0 });
-        }
-        p.accounts.get(account.accountId)!.cost += service.totalCost;
-
-        // 明細彙總 (Usage Type + Item Description 相同則加總)
-        service.details.forEach(detail => {
-          const detailKey = `${detail.usageType}|||${detail.itemDescription}`;
-          if (!p.details.has(detailKey)) {
-            p.details.set(detailKey, { 
-              usageType: detail.usageType, 
-              itemDescription: detail.itemDescription, 
-              usage: 0, 
-              cost: 0 
+    dataToProcess.forEach(monthData => {
+      monthData.accounts.forEach(account => {
+        account.services.forEach(service => {
+          if (!productMap.has(service.productName)) {
+            productMap.set(service.productName, {
+              productName: service.productName,
+              totalCost: 0,
+              accounts: new Map<string, ProductAccountSummary>(),
+              details: new Map<string, ProductDetailSummary>()
             });
           }
-          const d = p.details.get(detailKey)!;
-          d.usage += detail.usages;
-          d.cost += detail.totalCost;
+          
+          const p = productMap.get(service.productName)!;
+          p.totalCost += service.totalCost;
+
+          // 帳號佔比統計 (累計模式下會跨月累加同一帳號費用)
+          if (!p.accounts.has(account.accountId)) {
+            p.accounts.set(account.accountId, { accountId: account.accountId, accountName: account.accountName, cost: 0 });
+          }
+          p.accounts.get(account.accountId)!.cost += service.totalCost;
+
+          // 明細彙總 (Usage Type + Item Description 相同則加總)
+          service.details.forEach(detail => {
+            const detailKey = `${detail.usageType}|||${detail.itemDescription}`;
+            if (!p.details.has(detailKey)) {
+              p.details.set(detailKey, { 
+                usageType: detail.usageType, 
+                itemDescription: detail.itemDescription, 
+                usage: 0, 
+                cost: 0 
+              });
+            }
+            const d = p.details.get(detailKey)!;
+            d.usage += detail.usages;
+            d.cost += detail.totalCost;
+          });
         });
       });
     });
@@ -107,7 +114,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
         if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
     });
-  }, [selectedMonth, sortedData, sortConfig]);
+  }, [analysisMode, selectedMonth, sortedData, sortConfig]);
 
   const top10ChartData = useMemo(() => {
     return [...productAnalysis]
@@ -120,12 +127,16 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   }, [productAnalysis]);
 
   const handleExport = () => {
+    const filename = analysisMode === 'monthly' 
+      ? `service_analysis_${selectedMonth}` 
+      : `service_analysis_cumulative_all_time`;
+
     const exportData = productAnalysis.map(p => ({
       'Product Name': p.productName,
       'Total Cost (USD)': p.totalCost.toFixed(2),
-      'Usage Month': selectedMonth
+      'Analysis Period': analysisMode === 'monthly' ? selectedMonth : 'All-Time Cumulative'
     }));
-    exportToExcel(exportData, `service_analysis_${selectedMonth}`);
+    exportToExcel(exportData, filename);
   };
 
   const handleSort = (key: ProductSortKey) => {
@@ -144,7 +155,41 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
 
   return (
     <div className="space-y-8">
-      <Card title="Top 10 服務費用分佈">
+      {/* 模式切換器 */}
+      <div className="flex justify-center">
+        <div className="inline-flex rounded-md shadow-sm" role="group">
+          <button
+            type="button"
+            onClick={() => {
+              setAnalysisMode('monthly');
+              setExpandedProductName(null);
+            }}
+            className={`px-6 py-2 text-sm font-medium border border-gray-600 rounded-l-lg transition-colors ${
+              analysisMode === 'monthly' 
+                ? 'bg-blue-600 text-white border-blue-600' 
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+            }`}
+          >
+            單月分析 (Monthly)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAnalysisMode('cumulative');
+              setExpandedProductName(null);
+            }}
+            className={`px-6 py-2 text-sm font-medium border border-gray-600 rounded-r-lg transition-colors ${
+              analysisMode === 'cumulative' 
+                ? 'bg-blue-600 text-white border-blue-600' 
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+            }`}
+          >
+            全期間累計 (All-Time Aggregate)
+          </button>
+        </div>
+      </div>
+
+      <Card title={`Top 10 服務費用分佈 ${analysisMode === 'cumulative' ? '(全期間累計)' : `(${selectedMonth})`}`}>
         <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={top10ChartData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
@@ -167,20 +212,22 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       </Card>
 
       <Card 
-        title="產品服務清單" 
+        title={analysisMode === 'monthly' ? "產品服務清單 (按月)" : "產品服務清單 (全期間累計)"} 
         actionButton={
             <div className="flex items-center space-x-4">
-                <select
-                    value={selectedMonth}
-                    onChange={(e) => {
-                        setSelectedMonth(e.target.value);
-                        setExpandedProductName(null);
-                    }}
-                    className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg p-2"
-                >
-                    {months.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm transition-colors">匯出總表</button>
+                {analysisMode === 'monthly' && (
+                  <select
+                      value={selectedMonth}
+                      onChange={(e) => {
+                          setSelectedMonth(e.target.value);
+                          setExpandedProductName(null);
+                      }}
+                      className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg p-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                      {months.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                )}
+                <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm transition-colors shadow-lg">匯出 Excel</button>
             </div>
         }
       >
@@ -192,7 +239,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                             產品名稱 <span className={sortConfig.key === 'name' ? 'text-blue-400' : 'text-gray-500'}>{getSortIcon('name')}</span>
                         </th>
                         <th scope="col" className="px-6 py-3 text-right cursor-pointer hover:bg-gray-600 transition-colors" onClick={() => handleSort('totalCost')}>
-                            總費用 (USD) <span className={sortConfig.key === 'totalCost' ? 'text-blue-400' : 'text-gray-500'}>{getSortIcon('totalCost')}</span>
+                            {analysisMode === 'monthly' ? '本月總費用' : '全期間總費用'} (USD) <span className={sortConfig.key === 'totalCost' ? 'text-blue-400' : 'text-gray-500'}>{getSortIcon('totalCost')}</span>
                         </th>
                         <th scope="col" className="px-6 py-3 text-center">佔比</th>
                     </tr>
@@ -200,8 +247,8 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                 <tbody>
                     {productAnalysis.map(product => {
                         const isExpanded = expandedProductName === product.productName;
-                        const totalMonthCost = productAnalysis.reduce((sum, p) => sum + p.totalCost, 0);
-                        const percentage = totalMonthCost > 0 ? (product.totalCost / totalMonthCost) * 100 : 0;
+                        const totalPeriodCost = productAnalysis.reduce((sum, p) => sum + p.totalCost, 0);
+                        const percentage = totalPeriodCost > 0 ? (product.totalCost / totalPeriodCost) * 100 : 0;
 
                         return (
                             <React.Fragment key={product.productName}>
@@ -229,8 +276,11 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                                 {/* 帳號分佈 */}
                                                 <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                                                    <h5 className="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2">使用此產品的帳號分佈</h5>
+                                                    <h5 className="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2">
+                                                      {analysisMode === 'monthly' ? '帳號分佈 (本月)' : '帳號累計貢獻度'}
+                                                    </h5>
                                                     <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                                                        {/* Fix: Explicitly type callback parameters to resolve 'unknown' property access errors */}
                                                         {Array.from(product.accounts.values())
                                                             .sort((a: ProductAccountSummary, b: ProductAccountSummary) => b.cost - a.cost)
                                                             .map((acc: ProductAccountSummary) => {
@@ -253,7 +303,9 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
 
                                                 {/* 使用明細 */}
                                                 <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                                                    <h5 className="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2">產品使用明細彙總 (跨帳號)</h5>
+                                                    <h5 className="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2">
+                                                      {analysisMode === 'monthly' ? '產品使用明細彙總' : '產品使用明細 (全期間彙總)'}
+                                                    </h5>
                                                     <div className="overflow-x-auto max-h-64 overflow-y-auto custom-scrollbar">
                                                         <table className="w-full text-[11px] text-left">
                                                             <thead className="text-gray-500 uppercase sticky top-0 bg-gray-800">
@@ -264,6 +316,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y divide-gray-700">
+                                                                {/* Fix: Explicitly type callback parameters to resolve 'unknown' property access errors */}
                                                                 {Array.from(product.details.values())
                                                                     .sort((a: ProductDetailSummary, b: ProductDetailSummary) => b.cost - a.cost)
                                                                     .map((detail: ProductDetailSummary, dIdx) => (
