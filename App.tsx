@@ -5,11 +5,12 @@ import DashboardTab from './components/DashboardTab';
 import QueryTab from './components/QueryTab';
 import Top20Tab from './components/Top20Tab';
 import SiaReportTab from './components/SiaReportTab';
+import ServiceAnalysisTab from './components/ServiceAnalysisTab';
 import TabButton from './components/common/TabButton';
 import { useExcelProcessor } from './hooks/useExcelProcessor';
 import PrivacyNotice from './components/common/PrivacyNotice';
 
-type Tab = 'dashboard' | 'query' | 'top20' | 'sia';
+type Tab = 'dashboard' | 'query' | 'top20' | 'serviceAnalysis' | 'sia';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -50,21 +51,26 @@ const App: React.FC = () => {
     return (
       <>
         <div className="border-b border-gray-700 mb-6">
-          <nav className="-mb-px flex space-x-6" aria-label="Tabs">
+          <nav className="-mb-px flex space-x-6 overflow-x-auto" aria-label="Tabs">
             <TabButton 
               label="資料分析儀表板" 
               isActive={activeTab === 'dashboard'} 
               onClick={() => setActiveTab('dashboard')} 
             />
-            <TabButton 
-              label="明細資料查詢" 
-              isActive={activeTab === 'query'} 
-              onClick={() => setActiveTab('query')} 
+             <TabButton
+              label="服務使用分析"
+              isActive={activeTab === 'serviceAnalysis'}
+              onClick={() => setActiveTab('serviceAnalysis')}
             />
             <TabButton
               label="Top 20 用量分析"
               isActive={activeTab === 'top20'}
               onClick={() => setActiveTab('top20')}
+            />
+            <TabButton 
+              label="明細資料查詢" 
+              isActive={activeTab === 'query'} 
+              onClick={() => setActiveTab('query')} 
             />
              <TabButton
               label="SIA Report"
@@ -77,6 +83,7 @@ const App: React.FC = () => {
           {activeTab === 'dashboard' && <DashboardTab data={billingData} />}
           {activeTab === 'query' && <QueryTab data={billingData} />}
           {activeTab === 'top20' && <Top20Tab data={billingData} />}
+          {activeTab === 'serviceAnalysis' && <ServiceAnalysisTab data={billingData} />}
           {activeTab === 'sia' && <SiaReportTab data={billingData} />}
         </div>
       </>
