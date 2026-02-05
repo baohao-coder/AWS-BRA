@@ -30,6 +30,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
   const [focusMonth, setFocusMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
   const [expandedProductKey, setExpandedProductKey] = useState<string | null>(null);
+  const [showAccountListDetails, setShowAccountListDetails] = useState<{[month: string]: boolean}>({});
   
   // 排序狀態
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection }>({
@@ -50,6 +51,37 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
       month: monthData.month,
       'Total Amount of Payment (USD)': monthData.totalAmount,
     }));
+  }, [sortedData]);
+
+  // 帳號數量趨勢資料
+  const monthlyAccountCountData = useMemo(() => {
+    return sortedData.map(monthData => ({
+      month: monthData.month,
+      'Number of Accounts': monthData.accounts.length,
+    }));
+  }, [sortedData]);
+
+  // 帳號變動明細計算
+  const accountChangeLog = useMemo(() => {
+    const log = [];
+    for (let i = 0; i < sortedData.length; i++) {
+      const current = sortedData[i];
+      const prev = i > 0 ? sortedData[i - 1] : null;
+
+      const currentIds = new Set(current.accounts.map(a => a.accountId));
+      const prevIds = prev ? new Set(prev.accounts.map(a => a.accountId)) : new Set<string>();
+
+      const added = current.accounts.filter(a => !prevIds.has(a.accountId));
+      const removed = prev ? prev.accounts.filter(a => !currentIds.has(a.accountId)) : [];
+
+      log.push({
+        month: current.month,
+        total: current.accounts.length,
+        added: added.map(a => ({ id: a.accountId, name: a.accountName })),
+        removed: removed.map(a => ({ id: a.accountId, name: a.accountName }))
+      });
+    }
+    return log.reverse(); // 最新月份放在上面
   }, [sortedData]);
   
   const totalCumulativeAmount = useMemo(() => {
@@ -217,6 +249,13 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
       });
       exportToExcel(exportData, `account_cost_summary_sorted`);
   };
+
+  const toggleMonthDetails = (month: string) => {
+    setShowAccountListDetails(prev => ({
+      ...prev,
+      [month]: !prev[month]
+    }));
+  };
   
   return (
     <div className="space-y-8">
@@ -240,6 +279,125 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
               <Line type="monotone" dataKey="Total Amount of Payment (USD)" stroke="#4299e1" strokeWidth={2} activeDot={{ r: 8 }} />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </Card>
+
+      {/* 帳號數量趨勢與變動明細 */}
+      <Card title="帳號數量趨勢與變動明細">
+        <div className="h-64 mb-10">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={monthlyAccountCountData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
+              <XAxis dataKey="month" stroke="#a0aec0" />
+              <YAxis stroke="#a0aec0" allowDecimals={false} label={{ value: 'Count', angle: -90, position: 'insideLeft', fill: '#a0aec0' }} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }}
+                labelStyle={{ color: '#e2e8f0' }}
+                formatter={(value: number) => [value, 'Number of Accounts']}
+              />
+              <Legend wrapperStyle={{color: '#a0aec0'}} />
+              <Line type="stepAfter" dataKey="Number of Accounts" stroke="#48bb78" strokeWidth={2} activeDot={{ r: 6 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="mt-8">
+          <h4 className="text-md font-semibold text-white mb-4 border-l-4 border-green-500 pl-3">每月帳號變動日誌</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left text-gray-400">
+              <thead className="text-xs text-gray-300 uppercase bg-gray-700">
+                <tr>
+                  <th className="px-4 py-3">月份</th>
+                  <th className="px-4 py-3 text-center">總帳號數</th>
+                  <th className="px-4 py-3">新增帳號 (Added)</th>
+                  <th className="px-4 py-3">移除帳號 (Removed)</th>
+                  <th className="px-4 py-3 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {accountChangeLog.map((log) => {
+                  const hasChanges = log.added.length > 0 || log.removed.length > 0;
+                  const isExpanded = showAccountListDetails[log.month];
+
+                  return (
+                    <React.Fragment key={log.month}>
+                      <tr className={`bg-gray-800 hover:bg-gray-750 transition-colors ${!hasChanges ? 'opacity-75' : ''}`}>
+                        <td className="px-4 py-4 font-bold text-white">{log.month}</td>
+                        <td className="px-4 py-4 text-center">
+                          <span className="bg-gray-700 text-gray-200 px-2 py-1 rounded text-xs">{log.total}</span>
+                        </td>
+                        <td className="px-4 py-4">
+                          {log.added.length > 0 ? (
+                            <span className="text-green-400 font-bold">+{log.added.length}</span>
+                          ) : (
+                            <span className="text-gray-600">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          {log.removed.length > 0 ? (
+                            <span className="text-red-400 font-bold">-{log.removed.length}</span>
+                          ) : (
+                            <span className="text-gray-600">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          {hasChanges && (
+                            <button 
+                              onClick={() => toggleMonthDetails(log.month)}
+                              className="text-blue-400 hover:text-blue-300 text-xs font-medium underline"
+                            >
+                              {isExpanded ? '隱藏名單' : '顯示名單'}
+                            </button>
+                          )}
+                          {!hasChanges && <span className="text-gray-600 text-xs italic">無變動</span>}
+                        </td>
+                      </tr>
+                      {isExpanded && hasChanges && (
+                        <tr className="bg-gray-900/50 shadow-inner">
+                          <td colSpan={5} className="px-6 py-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                              {/* Added List */}
+                              <div>
+                                <h5 className="text-xs font-bold text-green-400 uppercase mb-2">新增名單 (+)</h5>
+                                {log.added.length > 0 ? (
+                                  <ul className="space-y-1">
+                                    {log.added.map(acc => (
+                                      <li key={acc.id} className="text-[11px] bg-green-900/20 border border-green-800/30 p-2 rounded flex justify-between">
+                                        <span className="text-gray-300">{acc.name}</span>
+                                        <span className="text-gray-500 font-mono ml-2">({acc.id})</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="text-xs text-gray-600 italic">無</p>
+                                )}
+                              </div>
+                              {/* Removed List */}
+                              <div>
+                                <h5 className="text-xs font-bold text-red-400 uppercase mb-2">移除/未出帳名單 (-)</h5>
+                                {log.removed.length > 0 ? (
+                                  <ul className="space-y-1">
+                                    {log.removed.map(acc => (
+                                      <li key={acc.id} className="text-[11px] bg-red-900/20 border border-red-800/30 p-2 rounded flex justify-between">
+                                        <span className="text-gray-300">{acc.name}</span>
+                                        <span className="text-gray-500 font-mono ml-2">({acc.id})</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="text-xs text-gray-600 italic">無</p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </Card>
 
