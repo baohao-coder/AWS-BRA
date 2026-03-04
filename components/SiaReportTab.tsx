@@ -122,7 +122,7 @@ const useSiaAnalysis = (data: BillingData) => {
 
         const USAGE_TYPE_EC2_KEYWORDS = ['heavyusage', 'instanceusage', 'nodeusage', 'boxusage', 'azusage', 'eks-auto'];
         const DESC_LINUX_KEYWORDS = ['linux', 'linux/unix', 'rhel'];
-        const GEN_AI_KEYWORDS = ['amazonq', 'amazon bedrock', 'amazonbedrock']; // "amazon bedrock" also covers "amazon bedrock edition"
+        const GEN_AI_KEYWORDS = ['amazonq', 'amazon bedrock', 'amazonbedrock', 'kiro'];
         
         allDetails.forEach(detail => {
             const monthData = analysisByMonth.get(detail.month);
@@ -222,7 +222,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
     });
 
     const genAiDetails = getFilteredDetails(d => {
-         const GEN_AI_KEYWORDS = ['amazonq', 'amazon bedrock', 'amazonbedrock'];
+         const GEN_AI_KEYWORDS = ['amazonq', 'amazon bedrock', 'amazonbedrock', 'kiro'];
          const productLower = d.productName.toLowerCase();
          return !productLower.includes('quicksight') && GEN_AI_KEYWORDS.some(kw => productLower.includes(kw));
     });
