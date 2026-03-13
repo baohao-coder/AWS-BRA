@@ -37,3 +37,17 @@ export interface PerAccountChange {
   accountName: string;
   monthlyTotals: { [month: string]: number | undefined };
 }
+
+export interface RiSpMonthData {
+  month: string;
+  originalPriceTotal: number;
+  riSpTotal: number;
+  ratio: number;
+}
+
+export interface RiSpAnalysisResult {
+  monthlyData: RiSpMonthData[];
+  grandTotalOriginalPrice: number;
+  grandTotalRiSp: number;
+  overallRatio: number;
+}

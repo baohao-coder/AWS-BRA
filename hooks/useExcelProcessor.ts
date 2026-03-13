@@ -198,5 +198,11 @@ export const useExcelProcessor = () => {
     }
   }, []);
 
-  return { billingData, isLoading, progress, error, processFiles };
+  const clearData = useCallback(() => {
+    setBillingData([]);
+    setError(null);
+    setProgress(0);
+  }, []);
+
+  return { billingData, isLoading, progress, error, processFiles, clearData };
 };

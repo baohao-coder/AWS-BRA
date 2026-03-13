@@ -6,37 +6,63 @@ import QueryTab from './components/QueryTab';
 import Top20Tab from './components/Top20Tab';
 import SiaReportTab from './components/SiaReportTab';
 import ServiceAnalysisTab from './components/ServiceAnalysisTab';
+import RiSpAnalysisTab from './components/RiSpAnalysisTab';
 import TabButton from './components/common/TabButton';
 import { useExcelProcessor } from './hooks/useExcelProcessor';
+import { useRiSpProcessor } from './hooks/useRiSpProcessor';
 import PrivacyNotice from './components/common/PrivacyNotice';
 
+type MainFunction = 'billing' | 'risp';
 type Tab = 'dashboard' | 'query' | 'top20' | 'serviceAnalysis' | 'sia';
 
 const App: React.FC = () => {
+  const [mainFunction, setMainFunction] = useState<MainFunction>('billing');
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [isAnonymizationEnabled, setIsAnonymizationEnabled] = useState(false);
+  
   const { 
     billingData, 
-    isLoading, 
-    progress, 
-    error, 
-    processFiles 
+    isLoading: isBillingLoading, 
+    progress: billingProgress, 
+    error: billingError, 
+    processFiles: processBillingFiles,
+    clearData: clearBillingData
   } = useExcelProcessor();
+
+  const {
+    result: rispResult,
+    isLoading: isRispLoading,
+    progress: rispProgress,
+    error: rispError,
+    processFiles: processRispFiles,
+    clearData: clearRispData
+  } = useRiSpProcessor();
+
+  const handleFunctionChange = (func: MainFunction) => {
+    if (func !== mainFunction) {
+      if (func === 'risp') {
+        clearBillingData();
+      } else {
+        clearRispData();
+      }
+      setMainFunction(func);
+    }
+  };
 
   const handleFilesSelected = useCallback(async (files: FileList | null) => {
     if (files) {
-      await processFiles(files, { anonymize: isAnonymizationEnabled });
+      await processBillingFiles(files, { anonymize: isAnonymizationEnabled });
       setActiveTab('dashboard');
     }
-  }, [processFiles, isAnonymizationEnabled]);
+  }, [processBillingFiles, isAnonymizationEnabled]);
 
   const renderContent = () => {
-    if (isLoading) {
+    if (isBillingLoading) {
       return null; // FileUpload component shows loading state
     }
 
-    if (error) {
-      return <div className="text-red-400 text-center p-4">{error}</div>;
+    if (billingError) {
+      return <div className="text-red-400 text-center p-4">{billingError}</div>;
     }
 
     if (billingData.length === 0) {
@@ -93,24 +119,64 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans">
       <div className="container mx-auto p-4 md:p-8">
-        <header className="mb-8">
-          <h1 className="text-4xl font-bold text-white tracking-tight">AWS Billing Report Analyzer</h1>
-          <p className="text-gray-400 mt-2">上傳、分析並查詢您的 AWS 帳單資料</p>
+        <header className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-bold text-white tracking-tight">AWS Billing Report Analyzer</h1>
+            <p className="text-gray-400 mt-2">上傳、分析並查詢您的 AWS 帳單資料</p>
+          </div>
+          
+          <div className="flex bg-gray-800 p-1 rounded-lg">
+            <button
+              onClick={() => handleFunctionChange('billing')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                mainFunction === 'billing' 
+                  ? 'bg-blue-600 text-white shadow-lg' 
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              1. 帳單明細分析
+            </button>
+            <button
+              onClick={() => handleFunctionChange('risp')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                mainFunction === 'risp' 
+                  ? 'bg-blue-600 text-white shadow-lg' 
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              2. RI/SP 比例分析
+            </button>
+          </div>
         </header>
         
-        <FileUpload 
-          onFilesSelected={handleFilesSelected} 
-          isLoading={isLoading} 
-          progress={progress}
-          isAnonymizationEnabled={isAnonymizationEnabled}
-          onAnonymizationChange={setIsAnonymizationEnabled}
-        />
-        
-        <PrivacyNotice />
+        {mainFunction === 'billing' ? (
+          <>
+            <FileUpload 
+              onFilesSelected={handleFilesSelected} 
+              isLoading={isBillingLoading} 
+              progress={billingProgress}
+              isAnonymizationEnabled={isAnonymizationEnabled}
+              onAnonymizationChange={setIsAnonymizationEnabled}
+            />
+            
+            <PrivacyNotice />
 
-        <main className="mt-8">
-          {renderContent()}
-        </main>
+            <main className="mt-8">
+              {renderContent()}
+            </main>
+          </>
+        ) : (
+          <main>
+            <RiSpAnalysisTab 
+              result={rispResult}
+              isLoading={isRispLoading}
+              progress={rispProgress}
+              error={rispError}
+              processFiles={processRispFiles}
+              clearData={clearRispData}
+            />
+          </main>
+        )}
       </div>
     </div>
   );
