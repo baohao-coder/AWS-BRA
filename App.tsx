@@ -49,8 +49,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFilesSelected = useCallback(async (files: FileList | null) => {
-    if (files) {
+  const handleFilesSelected = useCallback(async (files: File[]) => {
+    if (files && files.length > 0) {
       await processBillingFiles(files, { anonymize: isAnonymizationEnabled });
       setActiveTab('dashboard');
     }

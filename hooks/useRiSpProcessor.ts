@@ -18,7 +18,7 @@ export const useRiSpProcessor = () => {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const processFiles = useCallback(async (files: FileList) => {
+  const processFiles = useCallback(async (files: File[]) => {
     setIsLoading(true);
     setError(null);
     setResult(null);

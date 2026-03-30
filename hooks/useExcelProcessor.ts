@@ -18,7 +18,7 @@ export const useExcelProcessor = () => {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const processFiles = useCallback(async (files: FileList, options?: { anonymize?: boolean }) => {
+  const processFiles = useCallback(async (files: File[], options?: { anonymize?: boolean }) => {
     setIsLoading(true);
     setError(null);
     setBillingData([]);
@@ -36,7 +36,7 @@ export const useExcelProcessor = () => {
     const ALLOWED_EXTENSIONS = ['.xlsx', '.xls'];
 
     // Enhance file security by validating before processing.
-    for (const file of Array.from(files)) {
+    for (const file of files) {
       // 1. Validate file size to prevent browser crashes with excessively large files.
       if (file.size > MAX_FILE_SIZE_BYTES) {
         setError(`檔案 "${file.name}" 過大 (超過 ${MAX_FILE_SIZE_MB}MB)，為安全起見已拒絕處理。`);

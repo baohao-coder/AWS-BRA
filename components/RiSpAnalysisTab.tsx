@@ -2,13 +2,14 @@ import React, { useRef } from 'react';
 import { RiSpAnalysisResult } from '../types';
 import Card from './common/Card';
 import { exportToExcel } from '../services/excelUtils';
+import { sortFiles } from '../services/fileUtils';
 
 interface RiSpAnalysisTabProps {
   result: RiSpAnalysisResult | null;
   isLoading: boolean;
   progress: number;
   error: string | null;
-  processFiles: (files: FileList) => Promise<void>;
+  processFiles: (files: File[]) => Promise<void>;
   clearData: () => void;
 }
 
@@ -21,10 +22,19 @@ const RiSpAnalysisTab: React.FC<RiSpAnalysisTabProps> = ({
   clearData
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      processFiles(e.target.files);
+      const allowedExtensions = ['.xlsx', '.xls'];
+      const excelFiles = Array.from(e.target.files).filter((file: any) => {
+        const fileName = file.name.toLowerCase();
+        return allowedExtensions.some(ext => fileName.endsWith(ext));
+      }) as File[];
+      if (excelFiles.length > 0) {
+        const sortedFiles = sortFiles(excelFiles);
+        processFiles(sortedFiles);
+      }
     }
   };
 
@@ -67,18 +77,32 @@ const RiSpAnalysisTab: React.FC<RiSpAnalysisTabProps> = ({
             className="hidden"
             ref={fileInputRef}
           />
-          <div className="flex justify-center gap-4">
+          <div className="flex justify-center gap-4 flex-wrap">
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isLoading}
               className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:opacity-50"
             >
-              {isLoading ? '處理中...' : '選擇多個 Excel 檔案匯入'}
+              {isLoading ? '處理中...' : '選擇多個檔案'}
             </button>
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              disabled={isLoading}
+              className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:opacity-50"
+            >
+              選擇資料夾
+            </button>
+            <input 
+              type="file" 
+              className="hidden" 
+              ref={folderInputRef}
+              onChange={handleFileChange}
+              {...({ webkitdirectory: "", directory: "" } as any)}
+            />
             {result && (
               <button
                 onClick={clearData}
-                className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors"
+                className="bg-red-900/50 hover:bg-red-900 text-red-200 font-bold py-2 px-6 rounded-lg transition-colors"
               >
                 清除資料
               </button>
