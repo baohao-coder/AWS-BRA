@@ -1,6 +1,37 @@
 /**
- * 檔案處理相關工具函式
+ * 遞迴讀取資料夾中的所有檔案
  */
+export const getAllFilesFromEntries = async (entries: any[]): Promise<File[]> => {
+  const files: File[] = [];
+  
+  const readEntry = async (entry: any) => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve) => entry.file(resolve));
+      files.push(file);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const readEntries = async (): Promise<any[]> => {
+        return new Promise((resolve) => {
+          reader.readEntries((results: any[]) => resolve(results));
+        });
+      };
+      
+      let dirEntries = await readEntries();
+      // readEntries might need to be called multiple times to get all entries
+      while (dirEntries.length > 0) {
+        for (const dirEntry of dirEntries) {
+          await readEntry(dirEntry);
+        }
+        dirEntries = await readEntries();
+      }
+    }
+  };
+
+  for (const entry of entries) {
+    await readEntry(entry);
+  }
+  return files;
+};
 
 /**
  * 依據使用者需求排序檔案：

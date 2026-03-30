@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useRef } from 'react';
 import Spinner from './common/Spinner';
-import { sortFiles } from '../services/fileUtils';
+import { sortFiles, getAllFilesFromEntries } from '../services/fileUtils';
 
 interface FileUploadProps {
   onFilesSelected: (files: File[]) => void;
@@ -52,17 +52,30 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesSelected, isLoading, pro
     setError(null);
   };
 
-  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    
+    if (e.dataTransfer.items) {
+      const entries = Array.from(e.dataTransfer.items as any)
+        .filter((item: any) => item.kind === 'file')
+        .map((item: any) => item.webkitGetAsEntry())
+        .filter(entry => entry !== null);
+      
+      if (entries.length > 0) {
+        const allFiles = await getAllFilesFromEntries(entries);
+        handleFilesDiscovered(allFiles as unknown as FileList); // Casting for compatibility with filterExcelFiles
+      }
+    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFilesDiscovered(e.dataTransfer.files);
     }
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    handleFilesDiscovered(e.target.files);
+    if (e.target.files) {
+      handleFilesDiscovered(e.target.files);
+    }
   };
 
   const handleConfirmSelection = () => {
@@ -165,45 +178,46 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesSelected, isLoading, pro
           <p>{error}</p>
         </div>
       )}
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="flex-1">
-          <form onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
-            <label 
-              htmlFor="dropzone-file" 
-              className={`relative flex flex-col items-center justify-center w-full h-48 border-2 border-gray-500 border-dashed rounded-lg cursor-pointer bg-gray-700 hover:bg-gray-600 transition-colors ${dragActive ? "border-blue-500 bg-gray-600" : ""}`}
-              onDragEnter={handleDrag}
-              onDragLeave={handleDrag}
-              onDragOver={handleDrag}
-              onDrop={handleDrop}
-            >
-              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <svg className="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
-                <p className="mb-2 text-sm text-gray-400"><span className="font-semibold text-blue-400">點擊上傳</span> 或拖曳檔案至此</p>
-                <p className="text-xs text-gray-500">選擇多個月份的 AWS 帳單 Excel 檔案 (.xlsx, .xls)</p>
-              </div>
-              <input 
-                id="dropzone-file" 
-                type="file" 
-                className="hidden" 
-                multiple 
-                accept=".xlsx, .xls" 
-                onChange={handleFileChange} 
-                ref={fileInputRef}
-              />
-            </label>
-          </form>
-        </div>
-        <div className="flex flex-col justify-center items-center p-4 bg-gray-700/50 rounded-lg border border-gray-600 md:w-48">
-          <div className="mb-3 text-gray-400 text-center">
-            <svg className="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-            <p className="text-xs font-medium">或選擇整個資料夾</p>
+      <div className="flex flex-col gap-4">
+        <div 
+          className={`relative flex flex-col items-center justify-center w-full h-64 border-2 border-gray-500 border-dashed rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors ${dragActive ? "border-blue-500 bg-gray-600" : ""}`}
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+        >
+          <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
+            <svg className="w-12 h-12 mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+            <p className="mb-2 text-lg text-gray-300 font-semibold">拖曳檔案或資料夾至此</p>
+            <p className="mb-6 text-sm text-gray-400">系統將自動判斷並匯入所有有效的 Excel 檔案 (.xlsx, .xls)</p>
+            
+            <div className="flex flex-wrap justify-center gap-3">
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors flex items-center shadow-lg"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                選擇檔案
+              </button>
+              <button 
+                onClick={() => folderInputRef.current?.click()}
+                className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-colors flex items-center shadow-lg"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                選擇資料夾
+              </button>
+            </div>
           </div>
-          <button 
-            onClick={() => folderInputRef.current?.click()}
-            className="bg-gray-600 hover:bg-gray-500 text-white text-xs font-bold py-2 px-4 rounded transition-colors"
-          >
-            選擇資料夾
-          </button>
+          
+          <input 
+            id="dropzone-file" 
+            type="file" 
+            className="hidden" 
+            multiple 
+            accept=".xlsx, .xls" 
+            onChange={handleFileChange} 
+            ref={fileInputRef}
+          />
           <input 
             type="file" 
             className="hidden" 
