@@ -17,6 +17,13 @@ const formatNumber = (value: number, decimals: number = 2) => {
 const formatCurrency = (value: number) => `$${formatNumber(value)}`;
 const formatInteger = (value: number) => formatNumber(value, 0);
 
+const isGenAiProduct = (productName: string) => {
+    if (!productName) return false;
+    const lower = productName.toLowerCase();
+    const compact = lower.replace(/[\s\-_]+/g, '');
+    return compact.includes('amazonq') || compact.includes('bedrock') || compact.includes('kiro');
+};
+
 // --- Helper Components ---
 
 const StatusBadge: React.FC<{ status: 'achieved' | 'in-progress' | 'not-achieved' }> = ({ status }) => {
@@ -122,7 +129,6 @@ const useSiaAnalysis = (data: BillingData) => {
 
         const USAGE_TYPE_EC2_KEYWORDS = ['heavyusage', 'instanceusage', 'nodeusage', 'boxusage', 'azusage', 'eks-auto'];
         const DESC_LINUX_KEYWORDS = ['linux', 'linux/unix', 'rhel'];
-        const GEN_AI_KEYWORDS = ['amazonq', 'amazon bedrock', 'amazonbedrock', 'kiro'];
         
         allDetails.forEach(detail => {
             const monthData = analysisByMonth.get(detail.month);
@@ -145,8 +151,8 @@ const useSiaAnalysis = (data: BillingData) => {
                 }
             }
             
-            // 3. Gen AI
-            if (!productLower.includes('quicksight') && GEN_AI_KEYWORDS.some(kw => productLower.includes(kw))) {
+            // 3. Gen AI (Product Name 包含 "AmazonQ", "Bedrock", "Kiro")
+            if (isGenAiProduct(detail.productName)) {
                 monthData.genAiCost += detail.totalCost;
             }
 
@@ -221,11 +227,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
         return USAGE_TYPE_EC2_KEYWORDS.some(kw => d.usageType.toLowerCase().includes(kw)) && d.usageType.toLowerCase().includes('g.');
     });
 
-    const genAiDetails = getFilteredDetails(d => {
-         const GEN_AI_KEYWORDS = ['amazonq', 'amazon bedrock', 'amazonbedrock', 'kiro'];
-         const productLower = d.productName.toLowerCase();
-         return !productLower.includes('quicksight') && GEN_AI_KEYWORDS.some(kw => productLower.includes(kw));
-    });
+    const genAiDetails = getFilteredDetails(d => isGenAiProduct(d.productName));
 
     const rdsDetails = getFilteredDetails(d => {
         const productLower = d.productName.toLowerCase();
@@ -356,6 +358,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <p>• <span className="font-semibold text-white">Contract Year 1:</span> 產生費用可獲 50% Credit (上限 <span className="font-semibold text-green-400">$50,000</span>)</p>
             <p>• <span className="font-semibold text-white">Contract Year 2:</span> 產生費用可獲 50% Credit (上限 <span className="font-semibold text-green-400">$100,000</span>)</p>
             <p>• <span className="font-semibold text-white">Contract Year 3 (前10個月):</span> 產生費用可獲 50% Credit (上限 <span className="font-semibold text-green-400">$100,000</span>)</p>
+            <p className="text-xs text-gray-400 mt-1">• 判定條件：從 Product Name 搜尋關鍵字，包含 "AmazonQ"、"Bedrock"、"Kiro"。</p>
         </div>
         {analysis.cumulativeGenAiCost > 0 && (
             <div className="mt-4 p-3 bg-green-900/50 border border-green-500/50 text-green-300 rounded-md">
