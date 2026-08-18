@@ -2,6 +2,13 @@
 import React, { useMemo, useState } from 'react';
 import { BillingData, ServiceDetail } from '../types';
 import { exportToExcel } from '../services/excelUtils';
+import { 
+  getServiceCategory, 
+  CATEGORY_METAS, 
+  ALL_CATEGORIES, 
+  ServiceCategory, 
+  CategoryMeta 
+} from '../services/serviceTaxonomy';
 import Card from './common/Card';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, 
@@ -27,6 +34,7 @@ interface ProductDetailSummary {
 
 interface ProductSummary {
   productName: string;
+  category: ServiceCategory;
   totalCost: number;
   accounts: Map<string, ProductAccountSummary>;
   details: Map<string, ProductDetailSummary>;
@@ -64,6 +72,24 @@ interface AccountOption {
   totalCost: number;
 }
 
+export interface CategoryProductItem {
+  productName: string;
+  cost: number;
+  percentageOfCategory: number;
+  percentageOfTotal: number;
+  accounts: ProductAccountSummary[];
+  details: ProductDetailSummary[];
+}
+
+export interface CategorySummary {
+  category: ServiceCategory;
+  meta: CategoryMeta;
+  totalCost: number;
+  percentage: number;
+  serviceCount: number;
+  services: CategoryProductItem[];
+}
+
 const formatNumber = (value: number, decimals: number = 2) => {
   if (typeof value !== 'number' || isNaN(value)) return '0.00';
   return new Intl.NumberFormat('en-US', {
@@ -75,6 +101,7 @@ const formatNumber = (value: number, decimals: number = 2) => {
 // --- RGT Classification Helpers ---
 
 const isAiProduct = (prodName: string, usageType: string = '', desc: string = '') => {
+  if (getServiceCategory(prodName, usageType, desc) === 'AI') return true;
   const text = `${prodName} ${usageType} ${desc}`.toLowerCase();
   const compact = text.replace(/[\s\-_]+/g, '');
   const aiKeywords = [
@@ -87,6 +114,7 @@ const isAiProduct = (prodName: string, usageType: string = '', desc: string = ''
 };
 
 const isResilienceProduct = (prodName: string, usageType: string = '', desc: string = '') => {
+  if (getServiceCategory(prodName, usageType, desc) === '韌性') return true;
   const text = `${prodName} ${usageType} ${desc}`.toLowerCase();
   const resilienceKeywords = [
     'aws backup', 'elastic disaster recovery', 'route 53', 'route53', 
@@ -110,6 +138,7 @@ const isModernizationProduct = (prodName: string, usageType: string = '', desc: 
 };
 
 const isSecurityProduct = (prodName: string, usageType: string = '', desc: string = '') => {
+  if (getServiceCategory(prodName, usageType, desc) === 'Security') return true;
   const text = `${prodName} ${usageType} ${desc}`.toLowerCase();
   const secKeywords = [
     'waf', 'shield', 'guardduty', 'security hub', 'securityhub', 'key management service',
@@ -146,6 +175,8 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedProductName, setExpandedProductName] = useState<string | null>(null);
   const [expandedRgtKey, setExpandedRgtKey] = useState<string | null>(null);
+  const [expandedCategoryId, setExpandedCategoryId] = useState<ServiceCategory | null>(null);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<ServiceCategory | 'ALL'>('ALL');
   
   // Account filtering states
   const [isCustomAccountMode, setIsCustomAccountMode] = useState<boolean>(false);
@@ -540,6 +571,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
           if (!productMap.has(service.productName)) {
             productMap.set(service.productName, {
               productName: service.productName,
+              category: getServiceCategory(service.productName),
               totalCost: 0,
               accounts: new Map<string, ProductAccountSummary>(),
               details: new Map<string, ProductDetailSummary>()
@@ -585,15 +617,141 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
     });
   }, [analysisMode, selectedMonth, filteredData, sortConfig]);
 
+  // --- Category Analysis (8 AWS Service Categories) ---
+  const categoryAnalysis = useMemo(() => {
+    const totalSpend = productAnalysis.reduce((sum, p) => sum + p.totalCost, 0);
+    
+    // Group products by category
+    const catMap = new Map<ServiceCategory, {
+      totalCost: number;
+      products: ProductSummary[];
+    }>();
+
+    ALL_CATEGORIES.forEach(cat => {
+      catMap.set(cat, { totalCost: 0, products: [] });
+    });
+
+    productAnalysis.forEach(p => {
+      const cat = p.category;
+      const entry = catMap.get(cat) || { totalCost: 0, products: [] };
+      entry.totalCost += p.totalCost;
+      entry.products.push(p);
+      catMap.set(cat, entry);
+    });
+
+    const result: CategorySummary[] = ALL_CATEGORIES.map(cat => {
+      const meta = CATEGORY_METAS[cat];
+      const entry = catMap.get(cat)!;
+      const catCost = entry.totalCost;
+      const percentage = totalSpend > 0 ? (catCost / totalSpend) * 100 : 0;
+      
+      const services: CategoryProductItem[] = entry.products
+        .map(p => ({
+          productName: p.productName,
+          cost: p.totalCost,
+          percentageOfCategory: catCost > 0 ? (p.totalCost / catCost) * 100 : 0,
+          percentageOfTotal: totalSpend > 0 ? (p.totalCost / totalSpend) * 100 : 0,
+          accounts: Array.from(p.accounts.values()).sort((a, b) => b.cost - a.cost),
+          details: Array.from(p.details.values()).sort((a, b) => b.cost - a.cost)
+        }))
+        .sort((a, b) => b.cost - a.cost);
+
+      return {
+        category: cat,
+        meta,
+        totalCost: catCost,
+        percentage,
+        serviceCount: services.length,
+        services
+      };
+    }).sort((a, b) => b.totalCost - a.totalCost);
+
+    const pieData = result
+      .filter(c => c.totalCost > 0)
+      .map(c => ({
+        name: `${c.meta.id} ${c.meta.name}`,
+        shortName: c.meta.id,
+        value: c.totalCost,
+        color: c.meta.color
+      }));
+
+    return {
+      categories: result,
+      totalSpend,
+      pieData
+    };
+  }, [productAnalysis]);
+
+  // Displayed products with category filter applied
+  const displayedProducts = useMemo(() => {
+    if (selectedCategoryFilter === 'ALL') {
+      return productAnalysis;
+    }
+    return productAnalysis.filter(p => p.category === selectedCategoryFilter);
+  }, [productAnalysis, selectedCategoryFilter]);
+
   const top10ChartData = useMemo(() => {
     return [...productAnalysis]
       .sort((a, b) => b.totalCost - a.totalCost)
       .slice(0, 10)
       .map(p => ({
         name: p.productName,
+        category: p.category,
         cost: p.totalCost
       }));
   }, [productAnalysis]);
+
+  const handleExportCategoryBreakdown = () => {
+    const accountSuffix = isCustomAccountMode 
+      ? `_accounts_${selectedAccountIds.length}` 
+      : '_all_accounts';
+    const filename = analysisMode === 'monthly'
+      ? `aws_service_categories_spend_${selectedMonth}${accountSuffix}`
+      : `aws_service_categories_spend_cumulative${accountSuffix}`;
+
+    const rows: Record<string, string>[] = [];
+
+    categoryAnalysis.categories.forEach(cat => {
+      if (cat.services.length > 0) {
+        cat.services.forEach((srv, sIdx) => {
+          rows.push({
+            '服務分類 (Category)': sIdx === 0 ? `${cat.meta.id} - ${cat.meta.name}` : '',
+            '分類說明': sIdx === 0 ? cat.meta.description : '',
+            'AWS 服務產品 (Product)': srv.productName,
+            '產品金額 ($USD)': srv.cost.toFixed(2),
+            '佔分類比例 (%)': `${srv.percentageOfCategory.toFixed(2)}%`,
+            '佔全雲端總花費比例 (%)': `${srv.percentageOfTotal.toFixed(2)}%`,
+            '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計',
+            '帳號範圍': accountFilterSummaryText
+          });
+        });
+      } else {
+        rows.push({
+          '服務分類 (Category)': `${cat.meta.id} - ${cat.meta.name}`,
+          '分類說明': cat.meta.description,
+          'AWS 服務產品 (Product)': '(無費用產生)',
+          '產品金額 ($USD)': '0.00',
+          '佔分類比例 (%)': '0.00%',
+          '佔全雲端總花費比例 (%)': '0.00%',
+          '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計',
+          '帳號範圍': accountFilterSummaryText
+        });
+      }
+    });
+
+    rows.push({
+      '服務分類 (Category)': '總計 (Total)',
+      '分類說明': '全雲端花費加總',
+      'AWS 服務產品 (Product)': `共 ${productAnalysis.length} 項服務`,
+      '產品金額 ($USD)': categoryAnalysis.totalSpend.toFixed(2),
+      '佔分類比例 (%)': '100.00%',
+      '佔全雲端總花費比例 (%)': '100.00%',
+      '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計',
+      '帳號範圍': accountFilterSummaryText
+    });
+
+    exportToExcel(rows, filename);
+  };
 
   const handleExportRgt = () => {
     const accountSuffix = isCustomAccountMode 
@@ -649,11 +807,12 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       ? `service_analysis_${selectedMonth}${accountSuffix}` 
       : `service_analysis_cumulative_all_time${accountSuffix}`;
 
-    const exportData = productAnalysis.map(p => ({
-      'Product Name': p.productName,
-      'Total Cost (USD)': p.totalCost.toFixed(2),
-      'Analysis Period': analysisMode === 'monthly' ? selectedMonth : 'All-Time Cumulative',
-      'Account Dimension': accountFilterSummaryText
+    const exportData = displayedProducts.map(p => ({
+      '服務分類 (Category)': `${p.category} - ${CATEGORY_METAS[p.category].name}`,
+      '產品名稱 (Product Name)': p.productName,
+      '總費用 Total Cost (USD)': p.totalCost.toFixed(2),
+      '計費期間 (Analysis Period)': analysisMode === 'monthly' ? selectedMonth : '全期間累計 (All-Time)',
+      '分析帳號維度 (Account Dimension)': accountFilterSummaryText
     }));
     exportToExcel(exportData, filename);
   };
@@ -1259,24 +1418,335 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       </Card>
 
       {/* ========================================================================= */}
-      {/* 2. Top 10 服務費用分佈 - Top 10 Chart */}
+      {/* 2. 八大服務分類費用分佈 - 8 Service Categories Breakdown */}
+      {/* ========================================================================= */}
+      <Card 
+        title={`八大服務分類費用分佈 (8 Service Categories Distribution) ${analysisMode === 'cumulative' ? '(全期間累計)' : `(${selectedMonth})`} - ${accountFilterSummaryText}`}
+        actionButton={
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={handleExportCategoryBreakdown} 
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors shadow flex items-center gap-1.5"
+            >
+              <span>📊</span>
+              <span>匯出分類明細 Excel</span>
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-6">
+          {/* 8 大分類卡片網格 (Category Metric Cards) */}
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+            {categoryAnalysis.categories.map((cat) => {
+              const isSelected = selectedCategoryFilter === cat.category;
+              const isExpanded = expandedCategoryId === cat.category;
+
+              return (
+                <div 
+                  key={cat.category}
+                  onClick={() => {
+                    setSelectedCategoryFilter(prev => prev === cat.category ? 'ALL' : cat.category);
+                    setExpandedCategoryId(prev => prev === cat.category ? null : cat.category);
+                  }}
+                  className={`p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                    isSelected 
+                      ? 'bg-gray-750 border-blue-500 ring-2 ring-blue-500/40 shadow-lg scale-[1.02]' 
+                      : 'bg-gray-800/90 border-gray-700/80 hover:bg-gray-750 hover:border-gray-600'
+                  }`}
+                  style={{
+                    borderTopWidth: '4px',
+                    borderTopColor: cat.meta.color
+                  }}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xl">{cat.meta.icon}</span>
+                        <span className="font-bold text-white text-sm">{cat.meta.id}</span>
+                      </div>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-gray-700 text-gray-300">
+                        {cat.serviceCount} 項服務
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400 font-medium truncate mb-2">{cat.meta.name}</div>
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-gray-700/50">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-base sm:text-lg font-bold font-mono text-white">
+                        ${formatNumber(cat.totalCost)}
+                      </span>
+                      <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ color: cat.meta.color, backgroundColor: `${cat.meta.color}20` }}>
+                        {cat.percentage.toFixed(1)}%
+                      </span>
+                    </div>
+                    {/* 進度條 */}
+                    <div className="w-full bg-gray-700/60 rounded-full h-1.5 mt-2 overflow-hidden">
+                      <div 
+                        className="h-full rounded-full transition-all duration-500" 
+                        style={{ width: `${Math.min(100, Math.max(cat.percentage, 0))}%`, backgroundColor: cat.meta.color }}
+                      />
+                    </div>
+                  </div>
+
+                  {isSelected && (
+                    <div className="absolute top-1 right-1">
+                      <span className="flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 圖表與圓餅圖 (Category Charts) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center pt-2">
+            {/* 圓餅圖 */}
+            <div className="lg:col-span-5 flex flex-col items-center">
+              <h4 className="text-sm font-semibold text-gray-300 mb-2">服務分類佔比圓餅圖</h4>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={categoryAnalysis.pieData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={85}
+                      paddingAngle={3}
+                    >
+                      {categoryAnalysis.pieData.map((entry, index) => (
+                        <Cell key={`cat-pie-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '0.5rem' }}
+                      formatter={(value: number) => {
+                        const total = categoryAnalysis.totalSpend;
+                        const perc = total > 0 ? (value / total) * 100 : 0;
+                        return [`$${formatNumber(value)} (${perc.toFixed(1)}%)`, '費用'];
+                      }}
+                    />
+                    <Legend 
+                      wrapperStyle={{ fontSize: '11px' }}
+                      formatter={(value) => <span className="text-gray-300 font-medium">{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* 水平長條圖 */}
+            <div className="lg:col-span-7">
+              <h4 className="text-sm font-semibold text-gray-300 mb-2">各分類金額對比 (USD)</h4>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart 
+                    data={categoryAnalysis.categories.map(c => ({
+                      name: c.meta.id,
+                      fullName: `${c.meta.id} ${c.meta.name}`,
+                      cost: c.totalCost,
+                      color: c.meta.color
+                    }))} 
+                    layout="vertical" 
+                    margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" horizontal={false} />
+                    <XAxis type="number" stroke="#9ca3af" tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <YAxis dataKey="name" type="category" stroke="#e5e7eb" width={60} fontSize={12} fontWeight={600} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '0.5rem' }}
+                      labelFormatter={(_, payload) => payload[0]?.payload?.fullName || ''}
+                      formatter={(value: number) => [`$${formatNumber(value)}`, '總費用']}
+                    />
+                    <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
+                      {categoryAnalysis.categories.map((entry, index) => (
+                        <Cell key={`bar-${index}`} fill={entry.meta.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* 分類明細展開表格 (Category Breakdown Table) */}
+          <div className="border border-gray-700/80 rounded-xl overflow-hidden shadow-md">
+            <div className="bg-gray-750 px-5 py-3 border-b border-gray-700 flex justify-between items-center">
+              <div className="text-sm font-bold text-gray-200 flex items-center gap-2">
+                <span>📋</span>
+                <span>八大分類明細清單 (點擊任一分類可展開包含的 AWS 服務)</span>
+              </div>
+              {selectedCategoryFilter !== 'ALL' && (
+                <button
+                  onClick={() => {
+                    setSelectedCategoryFilter('ALL');
+                    setExpandedCategoryId(null);
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300 underline font-medium"
+                >
+                  清除篩選 (顯示全部)
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-gray-300">
+                <thead className="text-xs text-gray-400 uppercase bg-gray-700/80 border-b border-gray-600">
+                  <tr>
+                    <th scope="col" className="px-5 py-3 w-12 text-center">#</th>
+                    <th scope="col" className="px-5 py-3">服務分類 (Category)</th>
+                    <th scope="col" className="px-5 py-3">分類說明</th>
+                    <th scope="col" className="px-5 py-3 text-center">涵蓋服務數</th>
+                    <th scope="col" className="px-5 py-3 text-right">費用金額 (USD)</th>
+                    <th scope="col" className="px-5 py-3 text-right">佔比 (%)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {categoryAnalysis.categories.map((cat, idx) => {
+                    const isExpanded = expandedCategoryId === cat.category;
+                    const isFiltered = selectedCategoryFilter === cat.category;
+
+                    return (
+                      <React.Fragment key={cat.category}>
+                        <tr 
+                          onClick={() => {
+                            setExpandedCategoryId(prev => prev === cat.category ? null : cat.category);
+                            setSelectedCategoryFilter(prev => prev === cat.category ? 'ALL' : cat.category);
+                          }}
+                          className={`cursor-pointer transition-colors ${
+                            isFiltered 
+                              ? 'bg-gray-750 font-semibold' 
+                              : idx % 2 === 0 ? 'bg-gray-800 hover:bg-gray-750' : 'bg-gray-800/60 hover:bg-gray-750'
+                          }`}
+                        >
+                          <td className="px-5 py-3 text-center text-gray-500 font-mono text-xs">
+                            <span className={`inline-block transition-transform duration-200 ${isExpanded ? 'rotate-90 text-blue-400' : ''}`}>▶</span>
+                          </td>
+                          <td className="px-5 py-3 whitespace-nowrap">
+                            <div className="flex items-center space-x-2.5">
+                              <span className="text-lg">{cat.meta.icon}</span>
+                              <div>
+                                <span className="font-bold text-white mr-1.5">{cat.meta.id}</span>
+                                <span className="text-xs text-gray-300 font-medium">({cat.meta.name})</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 text-xs text-gray-400 max-w-xs truncate">
+                            {cat.meta.description}
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-200">
+                              {cat.serviceCount} 個服務
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 text-right font-mono font-bold text-white text-base">
+                            ${formatNumber(cat.totalCost)}
+                          </td>
+                          <td className="px-5 py-3 text-right font-mono font-semibold" style={{ color: cat.meta.color }}>
+                            {cat.percentage.toFixed(2)}%
+                          </td>
+                        </tr>
+
+                        {/* 展開之服務列表 */}
+                        {isExpanded && (
+                          <tr className="bg-gray-900/95 border-b border-gray-700">
+                            <td colSpan={6} className="p-4 sm:p-6 border-l-4" style={{ borderLeftColor: cat.meta.color }}>
+                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3 pb-2 border-b border-gray-700">
+                                <div className="text-xs font-bold text-gray-200 flex items-center gap-2">
+                                  <span>{cat.meta.icon}</span>
+                                  <span style={{ color: cat.meta.color }}>【{cat.meta.id} {cat.meta.name}】</span>
+                                  <span>包含之 AWS 服務列表 (共 {cat.services.length} 項)：</span>
+                                </div>
+                                <span className="text-xs text-gray-400">
+                                  分類小計: <strong className="text-white font-mono">${formatNumber(cat.totalCost)}</strong> ({cat.percentage.toFixed(2)}%)
+                                </span>
+                              </div>
+
+                              {cat.services.length > 0 ? (
+                                <div className="space-y-2 max-h-72 overflow-y-auto pr-2 custom-scrollbar">
+                                  {cat.services.map((srv, sIdx) => (
+                                    <div 
+                                      key={sIdx} 
+                                      className="bg-gray-800/90 hover:bg-gray-800 p-3 rounded-lg border border-gray-700/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 transition-colors"
+                                    >
+                                      <div className="flex items-center space-x-2">
+                                        <span className="text-xs text-gray-500 font-mono w-5">{sIdx + 1}.</span>
+                                        <span className="font-semibold text-white text-sm">{srv.productName}</span>
+                                      </div>
+                                      
+                                      <div className="flex items-center space-x-4 ml-7 sm:ml-0">
+                                        <div className="text-xs text-gray-400">
+                                          佔分類: <span className="font-mono font-medium text-gray-200">{srv.percentageOfCategory.toFixed(1)}%</span>
+                                        </div>
+                                        <div className="text-xs text-gray-400">
+                                          佔全雲端: <span className="font-mono font-medium text-gray-200">{srv.percentageOfTotal.toFixed(1)}%</span>
+                                        </div>
+                                        <div className="font-mono font-bold text-sm text-blue-400 min-w-[90px] text-right">
+                                          ${formatNumber(srv.cost)}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-gray-500 italic py-4 text-center">
+                                  此期間在所選帳號範圍內，此分類尚未產生費用
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+
+                  {/* 總計行 */}
+                  <tr className="bg-gray-750 font-bold border-t-2 border-gray-600">
+                    <td className="px-5 py-4 text-center text-gray-400">∑</td>
+                    <td className="px-5 py-4 text-white text-base">全服務總計 (Total)</td>
+                    <td className="px-5 py-4 text-gray-300 text-xs">8 大服務分類費用總額</td>
+                    <td className="px-5 py-4 text-center text-gray-200">{productAnalysis.length} 個服務</td>
+                    <td className="px-5 py-4 text-right font-mono text-yellow-400 text-lg">
+                      ${formatNumber(categoryAnalysis.totalSpend)}
+                    </td>
+                    <td className="px-5 py-4 text-right font-mono text-yellow-400">100.00%</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* ========================================================================= */}
+      {/* 3. Top 10 服務費用分佈 - Top 10 Chart */}
       {/* ========================================================================= */}
       <Card title={`Top 10 服務費用分佈 ${analysisMode === 'cumulative' ? '(全期間累計)' : `(${selectedMonth})`} - ${accountFilterSummaryText}`}>
         <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={top10ChartData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
+                <BarChart data={top10ChartData} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" horizontal={false} />
-                    <XAxis type="number" stroke="#a0aec0" />
-                    <YAxis dataKey="name" type="category" stroke="#a0aec0" width={90} fontSize={10} />
+                    <XAxis type="number" stroke="#a0aec0" tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <YAxis dataKey="name" type="category" stroke="#a0aec0" width={115} fontSize={11} />
                     <Tooltip 
                         contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }}
                         labelStyle={{ color: '#e2e8f0' }}
-                        formatter={(value: number) => [`$${formatNumber(value)}`, 'Total Cost']}
+                        formatter={(value: number, name, props) => [
+                          `$${formatNumber(value)} (${props?.payload?.category ? `${props.payload.category} - ${CATEGORY_METAS[props.payload.category as ServiceCategory]?.name || ''}` : ''})`, 
+                          'Total Cost'
+                        ]}
                     />
                     <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
-                        {top10ChartData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
+                        {top10ChartData.map((entry, index) => {
+                          const catColor = CATEGORY_METAS[entry.category]?.color || COLORS[index % COLORS.length];
+                          return <Cell key={`cell-${index}`} fill={catColor} />;
+                        })}
                     </Bar>
                 </BarChart>
             </ResponsiveContainer>
@@ -1284,7 +1754,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       </Card>
 
       {/* ========================================================================= */}
-      {/* 3. 產品服務清單與明細 - Product Service Breakdown List */}
+      {/* 4. 產品服務清單與明細 - Product Service Breakdown List */}
       {/* ========================================================================= */}
       <Card 
         title={`${analysisMode === 'monthly' ? `產品服務清單 (${selectedMonth})` : "產品服務清單 (全期間累計)"} - ${accountFilterSummaryText}`} 
@@ -1294,13 +1764,59 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
             </div>
         }
       >
-        <div className="overflow-x-auto">
+        <div className="space-y-4">
+          {/* 分類快速篩選膠囊列 (Category Filter Tabs) */}
+          <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-gray-700">
+            <span className="text-xs font-bold text-gray-400 mr-1">服務分類篩選:</span>
+            <button
+              onClick={() => setSelectedCategoryFilter('ALL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                selectedCategoryFilter === 'ALL'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-gray-700'
+              }`}
+            >
+              全部 (All) ({productAnalysis.length})
+            </button>
+
+            {ALL_CATEGORIES.map(cat => {
+              const meta = CATEGORY_METAS[cat];
+              const isSelected = selectedCategoryFilter === cat;
+              const catData = categoryAnalysis.categories.find(c => c.category === cat);
+              const count = catData?.serviceCount || 0;
+
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategoryFilter(prev => prev === cat ? 'ALL' : cat)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 border ${
+                    isSelected
+                      ? 'text-white shadow ring-2 ring-offset-1 ring-offset-gray-900'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border-gray-700'
+                  }`}
+                  style={{
+                    backgroundColor: isSelected ? meta.color : undefined,
+                    borderColor: isSelected ? meta.color : undefined
+                  }}
+                >
+                  <span>{meta.icon}</span>
+                  <span>{meta.id}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? 'bg-black/30 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="overflow-x-auto">
             <table className="w-full text-sm text-left text-gray-400">
                 <thead className="text-xs text-gray-300 uppercase bg-gray-700 sticky top-0">
                     <tr>
                         <th scope="col" className="px-6 py-3 cursor-pointer hover:bg-gray-600 transition-colors" onClick={() => handleSort('name')}>
                             產品名稱 <span className={sortConfig.key === 'name' ? 'text-blue-400' : 'text-gray-500'}>{getSortIcon('name')}</span>
                         </th>
+                        <th scope="col" className="px-6 py-3 text-center">服務分類</th>
                         <th scope="col" className="px-6 py-3 text-right cursor-pointer hover:bg-gray-600 transition-colors" onClick={() => handleSort('totalCost')}>
                             {analysisMode === 'monthly' ? '本月總費用' : '全期間總費用'} (USD) <span className={sortConfig.key === 'totalCost' ? 'text-blue-400' : 'text-gray-500'}>{getSortIcon('totalCost')}</span>
                         </th>
@@ -1308,10 +1824,12 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                     </tr>
                 </thead>
                 <tbody>
-                    {productAnalysis.map(product => {
+                    {displayedProducts.length > 0 ? (
+                      displayedProducts.map(product => {
                         const isExpanded = expandedProductName === product.productName;
                         const totalPeriodCost = productAnalysis.reduce((sum, p) => sum + p.totalCost, 0);
                         const percentage = totalPeriodCost > 0 ? (product.totalCost / totalPeriodCost) * 100 : 0;
+                        const meta = CATEGORY_METAS[product.category];
 
                         return (
                             <React.Fragment key={product.productName}>
@@ -1323,38 +1841,52 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                         <span className={`inline-block w-4 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                                         <span className="ml-2">{product.productName}</span>
                                     </td>
-                                    <td className="px-6 py-4 text-right font-bold text-blue-400">{formatNumber(product.totalCost)}</td>
+                                    <td className="px-6 py-4 text-center">
+                                      <span 
+                                        className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold"
+                                        style={{
+                                          color: meta.color,
+                                          backgroundColor: `${meta.color}20`,
+                                          border: `1px solid ${meta.color}40`
+                                        }}
+                                      >
+                                        <span>{meta.icon}</span>
+                                        <span>{meta.id}</span>
+                                      </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-right font-bold text-blue-400 font-mono">${formatNumber(product.totalCost)}</td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center">
                                             <div className="w-full bg-gray-700 rounded-full h-1.5 mr-2">
-                                                <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${percentage}%` }}></div>
+                                                <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, percentage)}%` }}></div>
                                             </div>
-                                            <span className="text-xs w-10 text-right">{percentage.toFixed(1)}%</span>
+                                            <span className="text-xs w-12 text-right font-mono">{percentage.toFixed(1)}%</span>
                                         </div>
                                     </td>
                                 </tr>
                                 {isExpanded && (
                                     <tr className="bg-gray-900">
-                                        <td colSpan={3} className="p-6">
+                                        <td colSpan={4} className="p-6">
                                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                                 {/* 帳號分佈 */}
                                                 <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                                                    <h5 className="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2">
-                                                      {analysisMode === 'monthly' ? '帳號分佈 (本月)' : '帳號累計貢獻度'}
+                                                    <h5 className="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2 flex items-center justify-between">
+                                                      <span>{analysisMode === 'monthly' ? '帳號分佈 (本月)' : '帳號累計貢獻度'}</span>
+                                                      <span className="text-xs text-gray-400 font-normal">共 {product.accounts.size} 個帳號</span>
                                                     </h5>
                                                     <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
                                                         {Array.from(product.accounts.values())
                                                             .sort((a: ProductAccountSummary, b: ProductAccountSummary) => b.cost - a.cost)
                                                             .map((acc: ProductAccountSummary) => {
-                                                                const accPerc = (acc.cost / product.totalCost) * 100;
+                                                                const accPerc = product.totalCost > 0 ? (acc.cost / product.totalCost) * 100 : 0;
                                                                 return (
                                                                     <div key={acc.accountId} className="flex flex-col mb-2">
                                                                         <div className="flex justify-between text-xs mb-1">
                                                                             <span className="text-gray-400">{acc.accountName} <span className="text-gray-600">({acc.accountId})</span></span>
-                                                                            <span className="text-white font-medium">${formatNumber(acc.cost)}</span>
+                                                                            <span className="text-white font-mono font-medium">${formatNumber(acc.cost)}</span>
                                                                         </div>
                                                                         <div className="w-full bg-gray-900 rounded-full h-1">
-                                                                            <div className="bg-green-500 h-1 rounded-full" style={{ width: `${accPerc}%` }}></div>
+                                                                            <div className="bg-green-500 h-1 rounded-full" style={{ width: `${Math.min(100, accPerc)}%` }}></div>
                                                                         </div>
                                                                     </div>
                                                                 );
@@ -1386,8 +1918,8 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                                                                 <div className="text-gray-300 font-medium">{detail.usageType}</div>
                                                                                 <div className="text-gray-500 italic text-[10px] leading-tight">{detail.itemDescription}</div>
                                                                             </td>
-                                                                            <td className="py-2 text-right text-gray-400">{formatNumber(detail.usage, 4)}</td>
-                                                                            <td className="py-2 text-right text-blue-300 font-bold">${formatNumber(detail.cost)}</td>
+                                                                            <td className="py-2 text-right text-gray-400 font-mono">{formatNumber(detail.usage, 4)}</td>
+                                                                            <td className="py-2 text-right text-blue-300 font-bold font-mono">${formatNumber(detail.cost)}</td>
                                                                         </tr>
                                                                     ))
                                                                 }
@@ -1401,9 +1933,17 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                 )}
                             </React.Fragment>
                         );
-                    })}
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-gray-500 text-sm">
+                          在目前的篩選條件下，無任何服務資料
+                        </td>
+                      </tr>
+                    )}
                 </tbody>
             </table>
+          </div>
         </div>
       </Card>
       

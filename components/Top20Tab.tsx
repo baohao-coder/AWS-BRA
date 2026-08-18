@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { BillingData, PerAccountChange, Service, ServiceDetail } from '../types';
 import { exportToExcel } from '../services/excelUtils';
+import { getServiceCategory, CATEGORY_METAS } from '../services/serviceTaxonomy';
 import Card from './common/Card';
 
 interface Top20TabProps {
@@ -513,6 +514,8 @@ const Top20Tab: React.FC<Top20TabProps> = ({ data }) => {
                                         const productKey = `${account.accountId}-${p.productName}`;
                                         const isProductExpanded = expandedProductKey === productKey;
                                         const details = usageDetailChanges.get(productKey) || [];
+                                        const cat = getServiceCategory(p.productName);
+                                        const meta = CATEGORY_METAS[cat];
                                         
                                         return (
                                           <React.Fragment key={p.productName}>
@@ -521,7 +524,18 @@ const Top20Tab: React.FC<Top20TabProps> = ({ data }) => {
                                                     <span className={`inline-block w-4 transition-transform duration-200 ${isProductExpanded ? 'transform rotate-90' : ''}`}>
                                                         ▶
                                                     </span>
-                                                    <span className="ml-2">{p.productName}</span>
+                                                    <span className="ml-2 font-medium">{p.productName}</span>
+                                                    <span 
+                                                      className="ml-2 inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                                      style={{
+                                                        color: meta.color,
+                                                        backgroundColor: `${meta.color}20`,
+                                                        border: `1px solid ${meta.color}40`
+                                                      }}
+                                                    >
+                                                      <span>{meta.icon}</span>
+                                                      <span>{meta.id}</span>
+                                                    </span>
                                                 </td>
                                                 <td className="px-4 py-2 text-right">{formatNumber(p.previousCost)}</td>
                                                 <td className="px-4 py-2 text-right">{formatNumber(p.currentCost)}</td>
