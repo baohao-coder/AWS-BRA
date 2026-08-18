@@ -58,6 +58,12 @@ interface RgtCategory {
   services?: ServiceBreakdownItem[];
 }
 
+interface AccountOption {
+  accountId: string;
+  accountName: string;
+  totalCost: number;
+}
+
 const formatNumber = (value: number, decimals: number = 2) => {
   if (typeof value !== 'number' || isNaN(value)) return '0.00';
   return new Intl.NumberFormat('en-US', {
@@ -122,20 +128,158 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const sortedData = useMemo(() => [...data].sort((a, b) => a.month.localeCompare(b.month)), [data]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
   
+  // Extract all unique accounts across the dataset
+  const allAccounts = useMemo<AccountOption[]>(() => {
+    const accMap = new Map<string, { accountId: string; accountName: string; totalCost: number }>();
+    sortedData.forEach(m => {
+      m.accounts.forEach(a => {
+        if (!accMap.has(a.accountId)) {
+          accMap.set(a.accountId, { accountId: a.accountId, accountName: a.accountName, totalCost: 0 });
+        }
+        accMap.get(a.accountId)!.totalCost += a.totalCost;
+      });
+    });
+    return Array.from(accMap.values()).sort((a, b) => b.totalCost - a.totalCost);
+  }, [sortedData]);
+
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedProductName, setExpandedProductName] = useState<string | null>(null);
   const [expandedRgtKey, setExpandedRgtKey] = useState<string | null>(null);
+  
+  // Account filtering states
+  const [isCustomAccountMode, setIsCustomAccountMode] = useState<boolean>(false);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [accountSearchQuery, setAccountSearchQuery] = useState<string>('');
+  const [showAccountSelector, setShowAccountSelector] = useState<boolean>(false);
+
   const [sortConfig, setSortConfig] = useState<{ key: ProductSortKey; direction: SortDirection }>({
     key: 'totalCost',
     direction: 'desc'
   });
 
+  // Filtered accounts list based on search in modal
+  const filteredAccountsList = useMemo(() => {
+    if (!accountSearchQuery.trim()) return allAccounts;
+    const q = accountSearchQuery.toLowerCase().trim();
+    return allAccounts.filter(a => 
+      a.accountName.toLowerCase().includes(q) || 
+      a.accountId.toLowerCase().includes(q)
+    );
+  }, [allAccounts, accountSearchQuery]);
+
+  // Account selection handlers
+  const handleSelectAllAccounts = () => {
+    setIsCustomAccountMode(false);
+    setSelectedAccountIds([]);
+    setExpandedProductName(null);
+    setExpandedRgtKey(null);
+  };
+
+  const handleSelectSingleAccountFromDropdown = (accId: string) => {
+    if (accId === '__ALL__') {
+      handleSelectAllAccounts();
+    } else {
+      setIsCustomAccountMode(true);
+      setSelectedAccountIds([accId]);
+      setExpandedProductName(null);
+      setExpandedRgtKey(null);
+    }
+  };
+
+  const handleToggleAccount = (accId: string) => {
+    setExpandedProductName(null);
+    setExpandedRgtKey(null);
+    if (!isCustomAccountMode) {
+      // Switching from 'all' to custom with all accounts except the toggled one (or just the selected one if user intention is to deselect)
+      setIsCustomAccountMode(true);
+      const remaining = allAccounts.map(a => a.accountId).filter(id => id !== accId);
+      setSelectedAccountIds(remaining);
+    } else {
+      setSelectedAccountIds(prev => {
+        if (prev.includes(accId)) {
+          return prev.filter(id => id !== accId);
+        } else {
+          return [...prev, accId];
+        }
+      });
+    }
+  };
+
+  const handleSelectOnlyAccount = (accId: string) => {
+    setIsCustomAccountMode(true);
+    setSelectedAccountIds([accId]);
+    setExpandedProductName(null);
+    setExpandedRgtKey(null);
+  };
+
+  const handleSelectMultipleAll = () => {
+    setIsCustomAccountMode(true);
+    setSelectedAccountIds(allAccounts.map(a => a.accountId));
+    setExpandedProductName(null);
+    setExpandedRgtKey(null);
+  };
+
+  const handleClearAllCustomAccounts = () => {
+    setIsCustomAccountMode(true);
+    setSelectedAccountIds([]);
+    setExpandedProductName(null);
+    setExpandedRgtKey(null);
+  };
+
+  const handleInvertAccounts = () => {
+    setIsCustomAccountMode(true);
+    const currentSet = new Set(selectedAccountIds);
+    const inverted = allAccounts.map(a => a.accountId).filter(id => !currentSet.has(id));
+    setSelectedAccountIds(inverted);
+    setExpandedProductName(null);
+    setExpandedRgtKey(null);
+  };
+
+  // Base Data Filtered by Account Dimension
+  const filteredData = useMemo(() => {
+    if (!isCustomAccountMode) {
+      return sortedData;
+    }
+    if (selectedAccountIds.length === 0) {
+      return sortedData.map(m => ({
+        ...m,
+        accounts: [],
+        totalCost: 0
+      }));
+    }
+    const accountSet = new Set(selectedAccountIds);
+    return sortedData.map(m => {
+      const filteredAccounts = m.accounts.filter(acc => accountSet.has(acc.accountId));
+      const totalCost = filteredAccounts.reduce((sum, a) => sum + a.totalCost, 0);
+      return {
+        ...m,
+        accounts: filteredAccounts,
+        totalCost
+      };
+    });
+  }, [sortedData, isCustomAccountMode, selectedAccountIds]);
+
+  // Current selected account label for UI and exports
+  const accountFilterSummaryText = useMemo(() => {
+    if (!isCustomAccountMode) {
+      return `全部帳號 (共 ${allAccounts.length} 個)`;
+    }
+    if (selectedAccountIds.length === 0) {
+      return '未選擇任何帳號';
+    }
+    if (selectedAccountIds.length === 1) {
+      const acc = allAccounts.find(a => a.accountId === selectedAccountIds[0]);
+      return acc ? `${acc.accountName} (${acc.accountId})` : selectedAccountIds[0];
+    }
+    return `自選 ${selectedAccountIds.length} / ${allAccounts.length} 個帳號`;
+  }, [isCustomAccountMode, selectedAccountIds, allAccounts]);
+
   // --- RGT (公雲使用花費分佈) Calculation ---
   const rgtAnalysis = useMemo(() => {
     const dataToProcess = analysisMode === 'monthly'
-      ? sortedData.filter(d => d.month === selectedMonth)
-      : sortedData;
+      ? filteredData.filter(d => d.month === selectedMonth)
+      : filteredData;
 
     if (dataToProcess.length === 0) {
       return {
@@ -146,9 +290,9 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       };
     }
 
-    const currentMonthIndex = sortedData.findIndex(d => d.month === selectedMonth);
+    const currentMonthIndex = filteredData.findIndex(d => d.month === selectedMonth);
     const prevMonthData = (analysisMode === 'monthly' && currentMonthIndex > 0)
-      ? sortedData[currentMonthIndex - 1]
+      ? filteredData[currentMonthIndex - 1]
       : null;
 
     // Previous month product costs for calculating Growth (G)
@@ -255,7 +399,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       }
     } else {
       // Cumulative mode: baseline first month vs subsequent aggregate growth
-      const firstMonth = sortedData[0];
+      const firstMonth = filteredData[0];
       const firstMonthNonTCosts = new Map<string, number>();
       if (firstMonth) {
         firstMonth.accounts.forEach(acc => {
@@ -268,11 +412,11 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       }
       const baselineTotal = sumMap(firstMonthNonTCosts);
       const totalNonTOverTime = nonTTotalCost;
-      growCost = Math.max(0, totalNonTOverTime - (baselineTotal * sortedData.length > totalNonTOverTime ? baselineTotal : baselineTotal));
+      growCost = Math.max(0, totalNonTOverTime - (baselineTotal * filteredData.length > totalNonTOverTime ? baselineTotal : baselineTotal));
       
       nonTServices.forEach((cost, prodName) => {
         const baseCost = firstMonthNonTCosts.get(prodName) || 0;
-        const totalBaseAlloc = Math.min(cost, baseCost * sortedData.length);
+        const totalBaseAlloc = Math.min(cost, baseCost * filteredData.length);
         const growthAlloc = Math.max(0, cost - totalBaseAlloc);
         if (growthAlloc > 0) growServicesMap.set(prodName, growthAlloc);
         if (totalBaseAlloc > 0) runServicesMap.set(prodName, totalBaseAlloc);
@@ -378,13 +522,13 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       tBreakdown,
       pieData
     };
-  }, [analysisMode, selectedMonth, sortedData]);
+  }, [analysisMode, selectedMonth, filteredData]);
 
   // --- Product Analysis Data ---
   const productAnalysis = useMemo(() => {
     const dataToProcess = analysisMode === 'monthly' 
-      ? sortedData.filter(d => d.month === selectedMonth)
-      : sortedData;
+      ? filteredData.filter(d => d.month === selectedMonth)
+      : filteredData;
 
     if (dataToProcess.length === 0) return [];
 
@@ -439,7 +583,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
         if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
     });
-  }, [analysisMode, selectedMonth, sortedData, sortConfig]);
+  }, [analysisMode, selectedMonth, filteredData, sortConfig]);
 
   const top10ChartData = useMemo(() => {
     return [...productAnalysis]
@@ -452,9 +596,12 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   }, [productAnalysis]);
 
   const handleExportRgt = () => {
+    const accountSuffix = isCustomAccountMode 
+      ? `_accounts_${selectedAccountIds.length}` 
+      : '_all_accounts';
     const filename = analysisMode === 'monthly'
-      ? `public_cloud_spend_distribution_${selectedMonth}`
-      : `public_cloud_spend_distribution_cumulative`;
+      ? `public_cloud_spend_distribution_${selectedMonth}${accountSuffix}`
+      : `public_cloud_spend_distribution_cumulative${accountSuffix}`;
 
     const rows: Record<string, string>[] = [];
 
@@ -466,7 +613,8 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
             '說明': sub.name,
             '金額 ($USD)': sub.cost.toFixed(2),
             '佔比 (%)': `${sub.percentage.toFixed(2)}%`,
-            '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計'
+            '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計',
+            '分析帳號維度': accountFilterSummaryText
           });
         });
       } else {
@@ -475,7 +623,8 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
           '說明': cat.description,
           '金額 ($USD)': cat.cost.toFixed(2),
           '佔比 (%)': `${cat.percentage.toFixed(2)}%`,
-          '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計'
+          '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計',
+          '分析帳號維度': accountFilterSummaryText
         });
       }
     });
@@ -485,21 +634,26 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       '說明': '全雲端花費加總',
       '金額 ($USD)': rgtAnalysis.totalCost.toFixed(2),
       '佔比 (%)': '100.00%',
-      '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計'
+      '計費期間': analysisMode === 'monthly' ? selectedMonth : '全期間累計',
+      '分析帳號維度': accountFilterSummaryText
     });
 
     exportToExcel(rows, filename);
   };
 
   const handleExport = () => {
+    const accountSuffix = isCustomAccountMode 
+      ? `_accounts_${selectedAccountIds.length}` 
+      : '_all_accounts';
     const filename = analysisMode === 'monthly' 
-      ? `service_analysis_${selectedMonth}` 
-      : `service_analysis_cumulative_all_time`;
+      ? `service_analysis_${selectedMonth}${accountSuffix}` 
+      : `service_analysis_cumulative_all_time${accountSuffix}`;
 
     const exportData = productAnalysis.map(p => ({
       'Product Name': p.productName,
       'Total Cost (USD)': p.totalCost.toFixed(2),
-      'Analysis Period': analysisMode === 'monthly' ? selectedMonth : 'All-Time Cumulative'
+      'Analysis Period': analysisMode === 'monthly' ? selectedMonth : 'All-Time Cumulative',
+      'Account Dimension': accountFilterSummaryText
     }));
     exportToExcel(exportData, filename);
   };
@@ -525,58 +679,328 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
 
   return (
     <div className="space-y-8">
-      {/* 模式切換器與月份選擇器 */}
-      <div className="flex flex-col sm:flex-row justify-between items-center bg-gray-800 p-4 rounded-xl border border-gray-700 gap-4 shadow-md">
-        <div className="flex items-center space-x-3">
-          <span className="text-sm font-bold text-gray-300">分析維度:</span>
-          <div className="inline-flex rounded-lg shadow-sm" role="group">
-            <button
-              type="button"
-              onClick={() => {
-                setAnalysisMode('monthly');
-                setExpandedProductName(null);
-                setExpandedRgtKey(null);
-              }}
-              className={`px-5 py-2 text-sm font-medium border border-gray-600 rounded-l-lg transition-all ${
-                analysisMode === 'monthly' 
-                  ? 'bg-blue-600 text-white border-blue-600 shadow' 
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-              }`}
-            >
-              單月分析 (Monthly)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAnalysisMode('cumulative');
-                setExpandedProductName(null);
-                setExpandedRgtKey(null);
-              }}
-              className={`px-5 py-2 text-sm font-medium border border-gray-600 rounded-r-lg transition-all ${
-                analysisMode === 'cumulative' 
-                  ? 'bg-blue-600 text-white border-blue-600 shadow' 
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-              }`}
-            >
-              全期間累計 (All-Time)
-            </button>
+      {/* 頂部維度選擇與篩選看板 */}
+      <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-md space-y-4">
+        {/* 第一行：時間維度與月份選擇 */}
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-4 border-b border-gray-700/80">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-gray-300 whitespace-nowrap">時間維度:</span>
+            <div className="inline-flex rounded-lg shadow-sm" role="group">
+              <button
+                type="button"
+                onClick={() => {
+                  setAnalysisMode('monthly');
+                  setExpandedProductName(null);
+                  setExpandedRgtKey(null);
+                }}
+                className={`px-4 py-2 text-sm font-medium border border-gray-600 rounded-l-lg transition-all ${
+                  analysisMode === 'monthly' 
+                    ? 'bg-blue-600 text-white border-blue-600 shadow' 
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+                }`}
+              >
+                單月分析 (Monthly)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAnalysisMode('cumulative');
+                  setExpandedProductName(null);
+                  setExpandedRgtKey(null);
+                }}
+                className={`px-4 py-2 text-sm font-medium border border-gray-600 rounded-r-lg transition-all ${
+                  analysisMode === 'cumulative' 
+                    ? 'bg-blue-600 text-white border-blue-600 shadow' 
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+                }`}
+              >
+                全期間累計 (All-Time)
+              </button>
+            </div>
+
+            {analysisMode === 'monthly' && (
+              <div className="flex items-center space-x-2 pl-2">
+                <label className="text-sm font-medium text-gray-300 whitespace-nowrap">選擇月份:</label>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => {
+                    setSelectedMonth(e.target.value);
+                    setExpandedProductName(null);
+                    setExpandedRgtKey(null);
+                  }}
+                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer"
+                >
+                  {months.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* 帳號篩選統計狀態 badge */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">目前帳號範圍:</span>
+            <span className={`text-xs px-2.5 py-1 rounded-full font-medium border ${
+              !isCustomAccountMode 
+                ? 'bg-blue-900/40 text-blue-300 border-blue-700/50' 
+                : selectedAccountIds.length === 0
+                ? 'bg-red-900/40 text-red-300 border-red-700/50'
+                : 'bg-purple-900/40 text-purple-300 border-purple-700/50'
+            }`}>
+              {accountFilterSummaryText}
+            </span>
           </div>
         </div>
 
-        {analysisMode === 'monthly' && (
-          <div className="flex items-center space-x-3">
-            <label className="text-sm font-medium text-gray-300">選擇月份:</label>
-            <select
-              value={selectedMonth}
-              onChange={(e) => {
-                setSelectedMonth(e.target.value);
-                setExpandedProductName(null);
-                setExpandedRgtKey(null);
-              }}
-              className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer"
+        {/* 第二行：帳號維度控制列 */}
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <span className="text-sm font-bold text-gray-300 whitespace-nowrap">帳號維度:</span>
+            
+            {/* 快速下拉：全部帳號 或 單一帳號切換 */}
+            <div className="flex items-center space-x-2">
+              <select
+                value={!isCustomAccountMode ? '__ALL__' : (selectedAccountIds.length === 1 ? selectedAccountIds[0] : '__MULTI__')}
+                onChange={(e) => {
+                  if (e.target.value === '__MULTI__') {
+                    setShowAccountSelector(true);
+                  } else {
+                    handleSelectSingleAccountFromDropdown(e.target.value);
+                  }
+                }}
+                className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer max-w-xs truncate"
+              >
+                <option value="__ALL__">🌐 全部帳號 (預設，共 {allAccounts.length} 個)</option>
+                {isCustomAccountMode && selectedAccountIds.length > 1 && (
+                  <option value="__MULTI__">📑 已自選 {selectedAccountIds.length} 個帳號</option>
+                )}
+                <optgroup label="單一帳號切換">
+                  {allAccounts.map(acc => (
+                    <option key={acc.accountId} value={acc.accountId}>
+                      {acc.accountName || acc.accountId} ({acc.accountId}) - ${formatNumber(acc.totalCost, 0)}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+
+            {/* 快捷切換「全部帳號」按鈕 */}
+            <button
+              type="button"
+              onClick={handleSelectAllAccounts}
+              className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
+                !isCustomAccountMode 
+                  ? 'bg-blue-600 text-white border-blue-500 shadow' 
+                  : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white'
+              }`}
             >
-              {months.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
+              全部帳號
+            </button>
+
+            {/* 自選多個帳號彈窗/面板開關按鈕 */}
+            <button
+              type="button"
+              onClick={() => setShowAccountSelector(prev => !prev)}
+              className={`px-3.5 py-2 text-xs font-medium rounded-lg border transition-all flex items-center gap-1.5 ${
+                showAccountSelector || (isCustomAccountMode && selectedAccountIds.length > 1)
+                  ? 'bg-purple-600 text-white border-purple-500 shadow'
+                  : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white'
+              }`}
+            >
+              <span>自選多個帳號</span>
+              <span className="bg-black/30 px-1.5 py-0.5 rounded text-[11px] font-mono">
+                {isCustomAccountMode ? selectedAccountIds.length : allAccounts.length}/{allAccounts.length}
+              </span>
+              <span className="text-[10px]">{showAccountSelector ? '▲' : '▼'}</span>
+            </button>
+          </div>
+
+          {/* 快速提示或清空選項 */}
+          {isCustomAccountMode && (
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={handleSelectAllAccounts}
+                className="text-blue-400 hover:text-blue-300 underline font-medium cursor-pointer"
+              >
+                重設為全部帳號
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 自選帳號面板 (Collapsible Multi-select Box) */}
+        {showAccountSelector && (
+          <div className="mt-3 p-4 bg-gray-900/90 rounded-xl border border-purple-500/40 shadow-inner space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gray-700">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-purple-300">🎯 自選多個帳號分析維度</span>
+                <span className="text-xs text-gray-400">
+                  (已選取 <strong className="text-white font-mono">{selectedAccountIds.length}</strong> / {allAccounts.length} 個帳號)
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={handleSelectMultipleAll}
+                  className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition"
+                >
+                  全選 ({allAccounts.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAllCustomAccounts}
+                  className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition"
+                >
+                  清空
+                </button>
+                <button
+                  type="button"
+                  onClick={handleInvertAccounts}
+                  className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition"
+                >
+                  反選
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSelectAllAccounts}
+                  className="px-2.5 py-1 bg-blue-600/80 hover:bg-blue-600 text-white rounded border border-blue-500 transition"
+                >
+                  切換全部帳號模式
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAccountSelector(false)}
+                  className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded border border-gray-700 transition"
+                >
+                  收合 ✕
+                </button>
+              </div>
+            </div>
+
+            {/* 搜尋帳號輸入框 */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="搜尋帳號名稱或 12 位帳號 ID..."
+                value={accountSearchQuery}
+                onChange={(e) => setAccountSearchQuery(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500"
+              />
+              {accountSearchQuery && (
+                <button
+                  onClick={() => setAccountSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* 帳號清單格點 (Account Items Grid) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1">
+              {filteredAccountsList.map(acc => {
+                const isSelected = isCustomAccountMode 
+                  ? selectedAccountIds.includes(acc.accountId) 
+                  : true;
+                
+                return (
+                  <div
+                    key={acc.accountId}
+                    className={`p-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 transition-all ${
+                      isSelected 
+                        ? 'bg-purple-950/40 border-purple-600/60 text-white shadow-sm' 
+                        : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:border-gray-600'
+                    }`}
+                  >
+                    <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleAccount(acc.accountId)}
+                        className="w-4 h-4 rounded text-purple-600 bg-gray-700 border-gray-600 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-gray-200 truncate" title={acc.accountName || acc.accountId}>
+                          {acc.accountName || '未命名帳號'}
+                        </div>
+                        <div className="text-[11px] text-gray-400 font-mono flex items-center justify-between">
+                          <span>{acc.accountId}</span>
+                          <span className="text-gray-300 font-medium">${formatNumber(acc.totalCost, 0)}</span>
+                        </div>
+                      </div>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectOnlyAccount(acc.accountId);
+                      }}
+                      className="text-[10px] px-1.5 py-0.5 bg-gray-700 hover:bg-purple-700 text-gray-300 hover:text-white rounded border border-gray-600 transition whitespace-nowrap"
+                      title="只選擇這個帳號"
+                    >
+                      僅此帳號
+                    </button>
+                  </div>
+                );
+              })}
+              {filteredAccountsList.length === 0 && (
+                <div className="col-span-full py-4 text-center text-gray-400 text-xs">
+                  找不到符合「{accountSearchQuery}」的帳號
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 若為自選模式且有選取帳號，顯示快速標籤列表 */}
+        {isCustomAccountMode && selectedAccountIds.length > 0 && !showAccountSelector && (
+          <div className="pt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-gray-400">已選帳號:</span>
+            {selectedAccountIds.slice(0, 8).map(id => {
+              const acc = allAccounts.find(a => a.accountId === id);
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 text-xs bg-purple-900/50 border border-purple-700 text-purple-200 px-2 py-0.5 rounded-md"
+                >
+                  <span className="truncate max-w-[150px]">{acc?.accountName || id}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAccount(id)}
+                    className="text-purple-300 hover:text-white ml-0.5 text-[10px]"
+                    title="移除此帳號"
+                  >
+                    ✕
+                  </button>
+                </span>
+              );
+            })}
+            {selectedAccountIds.length > 8 && (
+              <button
+                type="button"
+                onClick={() => setShowAccountSelector(true)}
+                className="text-xs text-purple-400 hover:text-purple-300 underline font-medium"
+              >
+                + 更多 {selectedAccountIds.length - 8} 個帳號
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 警告提示：自選模式但 0 個帳號選取 */}
+        {isCustomAccountMode && selectedAccountIds.length === 0 && (
+          <div className="p-3 bg-red-900/30 border border-red-700/60 rounded-lg text-red-200 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span>⚠️</span>
+              <span>您目前尚未勾選任何帳號，所有報表及圖表數據將顯示為 0。請選擇 1 個或多個帳號，或點擊右側按鈕恢復全部帳號。</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleSelectAllAccounts}
+              className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded font-medium transition whitespace-nowrap"
+            >
+              切換回全部帳號
+            </button>
           </div>
         )}
       </div>
@@ -585,7 +1009,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       {/* 1. 公雲使用花費分佈 (長官決策看板) - Public Cloud Spend Distribution Table */}
       {/* ========================================================================= */}
       <Card 
-        title={`公雲使用花費分佈 ${analysisMode === 'monthly' ? `(${selectedMonth})` : '(全期間累計)'}`}
+        title={`公雲使用花費分佈 ${analysisMode === 'monthly' ? `(${selectedMonth})` : '(全期間累計)'} - ${accountFilterSummaryText}`}
         actionButton={
           <button 
             onClick={handleExportRgt} 
@@ -837,7 +1261,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       {/* ========================================================================= */}
       {/* 2. Top 10 服務費用分佈 - Top 10 Chart */}
       {/* ========================================================================= */}
-      <Card title={`Top 10 服務費用分佈 ${analysisMode === 'cumulative' ? '(全期間累計)' : `(${selectedMonth})`}`}>
+      <Card title={`Top 10 服務費用分佈 ${analysisMode === 'cumulative' ? '(全期間累計)' : `(${selectedMonth})`} - ${accountFilterSummaryText}`}>
         <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={top10ChartData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
@@ -863,7 +1287,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       {/* 3. 產品服務清單與明細 - Product Service Breakdown List */}
       {/* ========================================================================= */}
       <Card 
-        title={analysisMode === 'monthly' ? "產品服務清單 (按月)" : "產品服務清單 (全期間累計)"} 
+        title={`${analysisMode === 'monthly' ? `產品服務清單 (${selectedMonth})` : "產品服務清單 (全期間累計)"} - ${accountFilterSummaryText}`} 
         actionButton={
             <div className="flex items-center space-x-4">
                 <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm transition-colors shadow-lg">匯出產品清單 Excel</button>
