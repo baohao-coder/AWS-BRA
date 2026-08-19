@@ -157,15 +157,19 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const sortedData = useMemo(() => [...data].sort((a, b) => a.month.localeCompare(b.month)), [data]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
   
-  // Extract all unique accounts across the dataset
+  // Extract all unique accounts across the dataset with total cost
   const allAccounts = useMemo<AccountOption[]>(() => {
     const accMap = new Map<string, { accountId: string; accountName: string; totalCost: number }>();
     sortedData.forEach(m => {
       m.accounts.forEach(a => {
+        const cost = typeof a.totalAmount === 'number' 
+          ? a.totalAmount 
+          : (a.services?.reduce((sum, s) => sum + (s.totalCost || 0), 0) || 0);
+
         if (!accMap.has(a.accountId)) {
           accMap.set(a.accountId, { accountId: a.accountId, accountName: a.accountName, totalCost: 0 });
         }
-        accMap.get(a.accountId)!.totalCost += a.totalCost;
+        accMap.get(a.accountId)!.totalCost += cost;
       });
     });
     return Array.from(accMap.values()).sort((a, b) => b.totalCost - a.totalCost);
@@ -184,20 +188,51 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const [accountSearchQuery, setAccountSearchQuery] = useState<string>('');
   const [showAccountSelector, setShowAccountSelector] = useState<boolean>(false);
 
+  // Dynamic account list reflecting cost in current mode (monthly or cumulative)
+  const currentModeAccounts = useMemo(() => {
+    const costMap = new Map<string, number>();
+    
+    if (analysisMode === 'monthly') {
+      const monthData = sortedData.find(d => d.month === selectedMonth);
+      if (monthData) {
+        monthData.accounts.forEach(a => {
+          const cost = typeof a.totalAmount === 'number' 
+            ? a.totalAmount 
+            : (a.services?.reduce((sum, s) => sum + (s.totalCost || 0), 0) || 0);
+          costMap.set(a.accountId, (costMap.get(a.accountId) || 0) + cost);
+        });
+      }
+    } else {
+      sortedData.forEach(m => {
+        m.accounts.forEach(a => {
+          const cost = typeof a.totalAmount === 'number' 
+            ? a.totalAmount 
+            : (a.services?.reduce((sum, s) => sum + (s.totalCost || 0), 0) || 0);
+          costMap.set(a.accountId, (costMap.get(a.accountId) || 0) + cost);
+        });
+      });
+    }
+
+    return allAccounts.map(acc => ({
+      ...acc,
+      currentCost: costMap.get(acc.accountId) || 0
+    })).sort((a, b) => b.currentCost - a.currentCost);
+  }, [allAccounts, sortedData, analysisMode, selectedMonth]);
+
   const [sortConfig, setSortConfig] = useState<{ key: ProductSortKey; direction: SortDirection }>({
     key: 'totalCost',
     direction: 'desc'
   });
 
-  // Filtered accounts list based on search in modal
+  // Filtered accounts list based on search in modal (using currentModeAccounts)
   const filteredAccountsList = useMemo(() => {
-    if (!accountSearchQuery.trim()) return allAccounts;
+    if (!accountSearchQuery.trim()) return currentModeAccounts;
     const q = accountSearchQuery.toLowerCase().trim();
-    return allAccounts.filter(a => 
+    return currentModeAccounts.filter(a => 
       a.accountName.toLowerCase().includes(q) || 
       a.accountId.toLowerCase().includes(q)
     );
-  }, [allAccounts, accountSearchQuery]);
+  }, [currentModeAccounts, accountSearchQuery]);
 
   // Account selection handlers
   const handleSelectAllAccounts = () => {
@@ -222,7 +257,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
     setExpandedProductName(null);
     setExpandedRgtKey(null);
     if (!isCustomAccountMode) {
-      // Switching from 'all' to custom with all accounts except the toggled one (or just the selected one if user intention is to deselect)
+      // Switching from 'all' to custom with all accounts except the toggled one
       setIsCustomAccountMode(true);
       const remaining = allAccounts.map(a => a.accountId).filter(id => id !== accId);
       setSelectedAccountIds(remaining);
@@ -282,7 +317,12 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
     const accountSet = new Set(selectedAccountIds);
     return sortedData.map(m => {
       const filteredAccounts = m.accounts.filter(acc => accountSet.has(acc.accountId));
-      const totalCost = filteredAccounts.reduce((sum, a) => sum + a.totalCost, 0);
+      const totalCost = filteredAccounts.reduce((sum, a) => {
+        const cost = typeof a.totalAmount === 'number' 
+          ? a.totalAmount 
+          : (a.services?.reduce((s, srv) => s + (srv.totalCost || 0), 0) || 0);
+        return sum + cost;
+      }, 0);
       return {
         ...m,
         accounts: filteredAccounts,
@@ -932,10 +972,10 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                 {isCustomAccountMode && selectedAccountIds.length > 1 && (
                   <option value="__MULTI__">📑 已自選 {selectedAccountIds.length} 個帳號</option>
                 )}
-                <optgroup label="單一帳號切換">
-                  {allAccounts.map(acc => (
+                <optgroup label={analysisMode === 'monthly' ? `單一帳號切換 (${selectedMonth} 當月費用)` : '單一帳號切換 (全期間累計費用)'}>
+                  {currentModeAccounts.map(acc => (
                     <option key={acc.accountId} value={acc.accountId}>
-                      {acc.accountName || acc.accountId} ({acc.accountId}) - ${formatNumber(acc.totalCost, 0)}
+                      {acc.accountName || acc.accountId} ({acc.accountId}) - ${formatNumber(acc.currentCost, 2)}
                     </option>
                   ))}
                 </optgroup>
@@ -994,7 +1034,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm text-purple-300">🎯 自選多個帳號分析維度</span>
                 <span className="text-xs text-gray-400">
-                  (已選取 <strong className="text-white font-mono">{selectedAccountIds.length}</strong> / {allAccounts.length} 個帳號)
+                  (已選取 <strong className="text-white font-mono">{selectedAccountIds.length}</strong> / {allAccounts.length} 個帳號，顯示金額為 {analysisMode === 'monthly' ? `${selectedMonth} 單月` : '全期間累計'})
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1084,7 +1124,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                         </div>
                         <div className="text-[11px] text-gray-400 font-mono flex items-center justify-between">
                           <span>{acc.accountId}</span>
-                          <span className="text-gray-300 font-medium">${formatNumber(acc.totalCost, 0)}</span>
+                          <span className="text-gray-300 font-medium font-mono">${formatNumber(acc.currentCost, 2)}</span>
                         </div>
                       </div>
                     </label>
