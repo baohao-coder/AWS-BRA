@@ -1,6 +1,6 @@
 {
   "name": "AWS Billing Report Analyzer",
-  "description": "An application to import, analyze, and query AWS monthly billing reports from Excel files. It provides insights into monthly cost trends, account changes, executive decision support, and 8-category service taxonomy analysis.",
+  "description": "An application to import, analyze, and query AWS monthly billing reports from Excel files. It provides insights into monthly cost trends, account changes, executive decision support, 8-category service taxonomy analysis, and AWS Enterprise Discount Program (EDP) multi-year contract variance tracking.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -7,13 +7,14 @@ import Top20Tab from './components/Top20Tab';
 import SiaReportTab from './components/SiaReportTab';
 import ServiceAnalysisTab from './components/ServiceAnalysisTab';
 import RiSpAnalysisTab from './components/RiSpAnalysisTab';
+import EdpAnalysisTab from './components/EdpAnalysisTab';
 import TabButton from './components/common/TabButton';
 import { useExcelProcessor } from './hooks/useExcelProcessor';
 import { useRiSpProcessor } from './hooks/useRiSpProcessor';
 import PrivacyNotice from './components/common/PrivacyNotice';
 
 type MainFunction = 'billing' | 'risp';
-type Tab = 'dashboard' | 'query' | 'top20' | 'serviceAnalysis' | 'sia';
+type Tab = 'dashboard' | 'serviceAnalysis' | 'top20' | 'query' | 'sia' | 'edp';
 
 const App: React.FC = () => {
   const [mainFunction, setMainFunction] = useState<MainFunction>('billing');
@@ -103,14 +104,20 @@ const App: React.FC = () => {
               isActive={activeTab === 'sia'}
               onClick={() => setActiveTab('sia')}
             />
+            <TabButton
+              label="EDP 合約分析"
+              isActive={activeTab === 'edp'}
+              onClick={() => setActiveTab('edp')}
+            />
           </nav>
         </div>
         <div>
           {activeTab === 'dashboard' && <DashboardTab data={billingData} />}
-          {activeTab === 'query' && <QueryTab data={billingData} />}
-          {activeTab === 'top20' && <Top20Tab data={billingData} />}
           {activeTab === 'serviceAnalysis' && <ServiceAnalysisTab data={billingData} />}
+          {activeTab === 'top20' && <Top20Tab data={billingData} />}
+          {activeTab === 'query' && <QueryTab data={billingData} />}
           {activeTab === 'sia' && <SiaReportTab data={billingData} />}
+          {activeTab === 'edp' && <EdpAnalysisTab data={billingData} />}
         </div>
       </>
     );
