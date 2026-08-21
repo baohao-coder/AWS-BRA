@@ -11,6 +11,7 @@ import {
   DEFAULT_FORECAST_SETTINGS,
   EdpContractConfig, 
   EdpForecastSettings,
+  EdpProjectedItem,
   EdpMonthResult, 
   EdpYearResult,
   addMonthsToYearMonth 
@@ -64,7 +65,21 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
   const [config, setConfig] = useState<EdpContractConfig>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CONFIG);
-      return saved ? JSON.parse(saved) : DEFAULT_EDP_CONFIG;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Automatically upgrade previous defaults if they had old 6M / 7M / 7M
+        if (parsed.year1?.annualTarget === 6000000 && parsed.year2?.annualTarget === 7000000) {
+          return DEFAULT_EDP_CONFIG;
+        }
+        return {
+          ...DEFAULT_EDP_CONFIG,
+          ...parsed,
+          year1: { ...DEFAULT_EDP_CONFIG.year1, ...(parsed.year1 || {}) },
+          year2: { ...DEFAULT_EDP_CONFIG.year2, ...(parsed.year2 || {}) },
+          year3: { ...DEFAULT_EDP_CONFIG.year3, ...(parsed.year3 || {}) },
+        };
+      }
+      return DEFAULT_EDP_CONFIG;
     } catch {
       return DEFAULT_EDP_CONFIG;
     }
@@ -85,6 +100,106 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
   const [startMonthOverride, setStartMonthOverride] = useState<string>('');
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
   const [showForecastManager, setShowForecastManager] = useState<boolean>(true);
+
+  // Project Modal State in Analysis Tab
+  const [showProjectModalInTab, setShowProjectModalInTab] = useState<boolean>(false);
+  const [editingProjectInTab, setEditingProjectInTab] = useState<EdpProjectedItem | null>(null);
+  const [projNameInTab, setProjNameInTab] = useState<string>('');
+  const [projCategoryInTab, setProjCategoryInTab] = useState<string>('AI / GenAI');
+  const [projStartMonthInTab, setProjStartMonthInTab] = useState<string>('');
+  const [projEndMonthInTab, setProjEndMonthInTab] = useState<string>('');
+  const [projAmountInTab, setProjAmountInTab] = useState<number>(30000);
+  const [projIsDiscountedInTab, setProjIsDiscountedInTab] = useState<boolean>(true);
+  const [projNotesInTab, setProjNotesInTab] = useState<string>('');
+
+  const handleOpenAddProjectInTab = () => {
+    setEditingProjectInTab(null);
+    setProjNameInTab('');
+    setProjCategoryInTab('AI / GenAI');
+    setProjStartMonthInTab(futureMonthsList[0] || '');
+    setProjEndMonthInTab('');
+    setProjAmountInTab(30000);
+    setProjIsDiscountedInTab(true);
+    setProjNotesInTab('');
+    setShowProjectModalInTab(true);
+  };
+
+  const handleOpenEditProjectInTab = (p: EdpProjectedItem) => {
+    setEditingProjectInTab(p);
+    setProjNameInTab(p.name);
+    setProjCategoryInTab(p.category || 'AI / GenAI');
+    setProjStartMonthInTab(p.startMonth || futureMonthsList[0] || '');
+    setProjEndMonthInTab(p.endMonth || '');
+    setProjAmountInTab(p.monthlyAmount);
+    setProjIsDiscountedInTab(p.isDiscounted ?? true);
+    setProjNotesInTab(p.notes || '');
+    setShowProjectModalInTab(true);
+  };
+
+  const handleToggleProjectInTab = (id: string) => {
+    setForecastSettings(prev => ({
+      ...prev,
+      projectedProjects: prev.projectedProjects.map(p =>
+        p.id === id ? { ...p, enabled: !p.enabled } : p
+      ),
+    }));
+  };
+
+  const handleDeleteProjectInTab = (id: string) => {
+    setForecastSettings(prev => ({
+      ...prev,
+      projectedProjects: prev.projectedProjects.filter(p => p.id !== id),
+    }));
+  };
+
+  const handleSaveProjectInTab = () => {
+    if (!projNameInTab.trim()) {
+      alert('請輸入專案名稱');
+      return;
+    }
+    const cleanStart = projStartMonthInTab || futureMonthsList[0] || '';
+    const cleanEnd = projEndMonthInTab.trim() || undefined;
+    const cleanAmt = Number(projAmountInTab) || 0;
+
+    if (editingProjectInTab) {
+      setForecastSettings(prev => ({
+        ...prev,
+        projectedProjects: prev.projectedProjects.map(p =>
+          p.id === editingProjectInTab.id
+            ? {
+                ...p,
+                name: projNameInTab.trim(),
+                category: projCategoryInTab,
+                startMonth: cleanStart,
+                endMonth: cleanEnd,
+                monthlyAmount: cleanAmt,
+                isDiscounted: projIsDiscountedInTab,
+                notes: projNotesInTab.trim(),
+              }
+            : p
+        ),
+      }));
+    } else {
+      const newProj: EdpProjectedItem = {
+        id: `proj-${Date.now()}`,
+        name: projNameInTab.trim(),
+        category: projCategoryInTab,
+        startMonth: cleanStart,
+        endMonth: cleanEnd,
+        monthlyAmount: cleanAmt,
+        isDiscounted: projIsDiscountedInTab,
+        enabled: true,
+        notes: projNotesInTab.trim(),
+      };
+      setForecastSettings(prev => ({
+        ...prev,
+        projectedProjects: [...prev.projectedProjects, newProj],
+      }));
+    }
+
+    setEditingProjectInTab(null);
+    setShowProjectModalInTab(false);
+  };
 
   // Sync to localStorage
   useEffect(() => {
@@ -263,22 +378,100 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
     exportToExcel(exportData, `EDP_Yearly_Summary_Report`);
   };
 
+  const contractStartMonth = edpResult.months[0]?.month || '2024-01';
+  const contractEndMonth = edpResult.months[edpResult.months.length - 1]?.month || '2026-12';
+  const forecastStartMonth = edpResult.forecastMonths[0]?.month || addMonthsToYearMonth(lastActualMonth, 1);
+
+  // Pipeline summary statistics across projects
+  const pipelineSummary = useMemo(() => {
+    const allProjects = forecastSettings.projectedProjects || [];
+    const enabledProjects = allProjects.filter(p => p.enabled);
+    
+    let totalMonthlyRaw = 0;
+    let totalMonthlyAdjusted = 0;
+    let totalLifetimeRaw = 0;
+    let totalLifetimeAdjusted = 0;
+
+    enabledProjects.forEach(p => {
+      const projStart = p.startMonth || forecastStartMonth;
+      const projEnd = p.endMonth || contractEndMonth;
+      const activeCount = edpResult.forecastMonths.filter(m => m.month >= projStart && m.month <= projEnd).length;
+      
+      const rawM = Number(p.monthlyAmount) || 0;
+      const adjM = p.isDiscounted ? rawM * config.discountRate : rawM;
+      
+      totalMonthlyRaw += rawM;
+      totalMonthlyAdjusted += adjM;
+      totalLifetimeRaw += rawM * activeCount;
+      totalLifetimeAdjusted += adjM * activeCount;
+    });
+
+    const totalLifetimeSavings = totalLifetimeRaw - totalLifetimeAdjusted;
+    const totalCommitmentRate = edpResult.total3YearCommitment > 0 ? (totalLifetimeAdjusted / edpResult.total3YearCommitment) * 100 : 0;
+
+    return {
+      totalProjectsCount: allProjects.length,
+      enabledProjectsCount: enabledProjects.length,
+      totalMonthlyRaw,
+      totalMonthlyAdjusted,
+      totalLifetimeRaw,
+      totalLifetimeAdjusted,
+      totalLifetimeSavings,
+      totalCommitmentRate,
+    };
+  }, [forecastSettings.projectedProjects, forecastStartMonth, contractEndMonth, edpResult.forecastMonths, config.discountRate, edpResult.total3YearCommitment]);
+
   const handleExportProjects = () => {
     const exportData = (forecastSettings.projectedProjects || []).map(p => {
-      const discountedAmount = p.isDiscounted ? p.monthlyAmount * config.discountRate : p.monthlyAmount;
+      const projStart = p.startMonth || forecastStartMonth;
+      const projEnd = p.endMonth || contractEndMonth;
+      const activeCount = edpResult.forecastMonths.filter(m => m.month >= projStart && m.month <= projEnd).length;
+      
+      const rawMonthly = Number(p.monthlyAmount) || 0;
+      const discountedMonthly = p.isDiscounted ? rawMonthly * config.discountRate : rawMonthly;
+      const lifetimeRaw = rawMonthly * activeCount;
+      const lifetimeAdjusted = discountedMonthly * activeCount;
+      const lifetimeSavings = lifetimeRaw - lifetimeAdjusted;
+      const targetPercent = edpResult.total3YearCommitment > 0 ? (lifetimeAdjusted / edpResult.total3YearCommitment) * 100 : 0;
+
       return {
         '專案名稱 (Project Name)': p.name,
         '分類 (Category)': p.category || '專案',
         '啟用狀態 (Enabled)': p.enabled ? '已啟用' : '已停用',
-        '起始月份 (Start Month)': p.startMonth || '接續起始',
-        '結束月份 (End Month)': p.endMonth || '持續至期滿',
-        '每月預估費用 (USD)': p.monthlyAmount,
-        '折後/實計費用 (Adjusted USD)': Number(discountedAmount.toFixed(2)),
+        '起始月份 (Start Month)': p.startMonth || `接續起始 (${forecastStartMonth})`,
+        '結束月份 (End Month)': p.endMonth || `持續至期滿 (${contractEndMonth})`,
+        '合約涵蓋月數 (Active Months)': activeCount,
+        '原始每月預估 (Monthly Raw USD)': rawMonthly,
+        'EDP 折後月計價 (Monthly Adjusted USD)': Number(discountedMonthly.toFixed(2)),
+        '合約期滿累計原始總額 (Lifetime Raw USD)': Number(lifetimeRaw.toFixed(2)),
+        '合約期滿累計 EDP 折後貢獻 (Lifetime EDP USD)': Number(lifetimeAdjusted.toFixed(2)),
+        '佔 3 年總承諾比例 (%)': `${targetPercent.toFixed(2)}%`,
+        '累計折後節省金額 (Lifetime Savings USD)': Number(lifetimeSavings.toFixed(2)),
         '享有 89 折折扣': p.isDiscounted ? '是 (89%)' : '否 (Marketplace 100%)',
         '專案備註 (Notes)': p.notes || '',
       };
     });
-    exportToExcel(exportData, `EDP_Projected_Projects_List`);
+
+    if (exportData.length > 0) {
+      exportData.push({
+        '專案名稱 (Project Name)': `合計 (已啟用 ${pipelineSummary.enabledProjectsCount} 個專案)`,
+        '分類 (Category)': 'Pipeline Total',
+        '啟用狀態 (Enabled)': `${pipelineSummary.enabledProjectsCount} / ${pipelineSummary.totalProjectsCount} 啟用`,
+        '起始月份 (Start Month)': forecastStartMonth,
+        '結束月份 (End Month)': contractEndMonth,
+        '合約涵蓋月數 (Active Months)': edpResult.forecastMonthCount,
+        '原始每月預估 (Monthly Raw USD)': Number(pipelineSummary.totalMonthlyRaw.toFixed(2)),
+        'EDP 折後月計價 (Monthly Adjusted USD)': Number(pipelineSummary.totalMonthlyAdjusted.toFixed(2)),
+        '合約期滿累計原始總額 (Lifetime Raw USD)': Number(pipelineSummary.totalLifetimeRaw.toFixed(2)),
+        '合約期滿累計 EDP 折後貢獻 (Lifetime EDP USD)': Number(pipelineSummary.totalLifetimeAdjusted.toFixed(2)),
+        '佔 3 年總承諾比例 (%)': `${pipelineSummary.totalCommitmentRate.toFixed(2)}%`,
+        '累計折後節省金額 (Lifetime Savings USD)': Number(pipelineSummary.totalLifetimeSavings.toFixed(2)),
+        '享有 89 折折扣': '-',
+        '專案備註 (Notes)': '從各專案上線起累計至 3 年合約期滿之貢獻加總',
+      });
+    }
+
+    exportToExcel(exportData, `EDP_Projected_Projects_Pipeline`);
   };
 
   return (
@@ -487,87 +680,98 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
           </div>
         </div>
 
-        {/* 目前合約年進度 */}
-        {(() => {
-          const currentYearObj = edpResult.years.find(y => y.yearKey === edpResult.activeYearKey) || edpResult.years[0];
-          return (
-            <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md">
-              <div className="flex items-center justify-between text-gray-400 text-xs font-medium">
-                <span>目前合約年度 ({currentYearObj?.yearKey})</span>
-                <span className={`px-2 py-0.5 rounded-full font-mono text-[11px] ${
-                  currentYearObj?.status === 'SURPLUS' ? 'bg-emerald-900/60 text-emerald-300' : 'bg-purple-900/60 text-purple-300'
-                }`}>
-                  {currentYearObj?.totalMonthCount} / 12 月
-                </span>
-              </div>
-              <div className="text-2xl lg:text-3xl font-extrabold text-white mt-2 font-mono">
-                {formatShortCurrency(currentYearObj?.totalEdpAdjustedCost || 0)}
-              </div>
-              <div className="text-xs text-gray-400 mt-2 flex items-center justify-between">
-                <span>年度目標 ({formatShortCurrency(currentYearObj?.annualTarget || 0)}):</span>
-                <strong className={`font-mono text-sm ${
-                  (currentYearObj?.achievementRate || 0) >= 100 ? 'text-emerald-400' : 'text-purple-400'
-                }`}>
-                  {formatPercent(currentYearObj?.achievementRate || 0)}
-                </strong>
-              </div>
-              <div className="w-full bg-gray-700 h-2 rounded-full mt-2 overflow-hidden">
-                <div 
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    (currentYearObj?.achievementRate || 0) >= 100 ? 'bg-emerald-500' : 'bg-purple-500'
-                  }`}
-                  style={{ width: `${Math.min(100, currentYearObj?.achievementRate || 0)}%` }}
-                ></div>
-              </div>
-              <div className="text-[11px] text-gray-400 mt-2 flex justify-between">
-                <span>年度差異/缺口:</span>
-                <strong className={`font-mono ${(currentYearObj?.variance || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {formatVarianceText(currentYearObj?.variance || 0)}
-                </strong>
-              </div>
+        {/* 各合約年度達成進度 (Year 1 ~ Year 3) */}
+        <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-gray-400 text-xs font-medium mb-2">
+              <span className="font-bold text-gray-300">合約年度進度</span>
+              <span className="text-[11px] font-mono text-gray-400">
+                目標 ${(config.year1.annualTarget / 1000000).toFixed(1)}M / ${(config.year2.annualTarget / 1000000).toFixed(1)}M / ${(config.year3.annualTarget / 1000000).toFixed(1)}M
+              </span>
             </div>
-          );
-        })()}
-
-        {/* 平均實際/預估 MRR vs 目標 MRR */}
-        {(() => {
-          const avgActualMrr = edpResult.actualMonthCount > 0 
-            ? edpResult.actualAdjustedSpend / edpResult.actualMonthCount 
-            : 0;
-          const avgTotalMrr = edpResult.totalMonthCount > 0 
-            ? edpResult.totalAdjustedSpend / edpResult.totalMonthCount 
-            : 0;
-          const currentYearObj = edpResult.years.find(y => y.yearKey === edpResult.activeYearKey) || edpResult.years[0];
-          const targetMrr = currentYearObj?.mrrTarget || config.year1.mrrTarget;
-          const mrrDiff = (forecastSettings.enabled ? avgTotalMrr : avgActualMrr) - targetMrr;
-          const isSurplus = mrrDiff >= 0;
-
-          return (
-            <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md">
-              <div className="flex items-center justify-between text-gray-400 text-xs font-medium">
-                <span>{forecastSettings.enabled ? '預估月均用量 (Projected MRR)' : '歷史月均用量 (Actual MRR)'}</span>
-                <span className={`px-2 py-0.5 rounded-full font-mono text-xs ${
-                  isSurplus ? 'bg-emerald-900/60 text-emerald-300' : 'bg-rose-900/60 text-rose-300'
-                }`}>
-                  {isSurplus ? '超額達標' : '未達目標'}
-                </span>
-              </div>
-              <div className="text-2xl lg:text-3xl font-extrabold text-white mt-2 font-mono">
-                {formatShortCurrency(forecastSettings.enabled ? avgTotalMrr : avgActualMrr)}
-              </div>
-              <div className="text-xs text-gray-400 mt-2 flex items-center justify-between">
-                <span>{currentYearObj?.yearKey} 目標 MRR:</span>
-                <span className="text-gray-300 font-mono">{formatShortCurrency(targetMrr)}</span>
-              </div>
-              <div className="text-xs text-gray-400 mt-1 flex items-center justify-between">
-                <span>月均差異額:</span>
-                <strong className={`font-mono ${isSurplus ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {formatVarianceText(mrrDiff)}
-                </strong>
-              </div>
+            
+            <div className="space-y-2.5">
+              {edpResult.years.map((y) => {
+                const isCurrentActive = y.yearKey === edpResult.activeYearKey;
+                const isSurplus = (y.achievementRate || 0) >= 100;
+                return (
+                  <div key={y.yearKey} className="bg-gray-900/60 p-2 rounded-lg border border-gray-700/50">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-bold font-mono ${isCurrentActive ? 'text-indigo-400' : 'text-gray-300'}`}>
+                          {y.yearKey}
+                        </span>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          ({y.actualMonthCount}實{y.forecastMonthCount > 0 ? `+${y.forecastMonthCount}估` : ''}月)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono">
+                        <span className="text-white font-bold">{formatShortCurrency(y.totalEdpAdjustedCost || 0)}</span>
+                        <span className={`text-[11px] font-bold ${isSurplus ? 'text-emerald-400' : 'text-purple-400'}`}>
+                          {formatPercent(y.achievementRate || 0)}
+                        </span>
+                      </div>
+                    </div>
+                    {/* 進度條 */}
+                    <div className="w-full bg-gray-700/70 h-1.5 rounded-full mt-1.5 overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          isSurplus ? 'bg-emerald-500' : 'bg-purple-500'
+                        }`}
+                        style={{ width: `${Math.min(100, y.achievementRate || 0)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })()}
+          </div>
+        </div>
+
+        {/* 各合約年度月均用量 vs 目標 MRR (Year 1 ~ Year 3) */}
+        <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-gray-400 text-xs font-medium mb-2">
+              <span className="font-bold text-gray-300">
+                {forecastSettings.enabled ? '各年度預估月均 (MRR)' : '各年度月均用量 (MRR)'}
+              </span>
+              <span className="text-[11px] font-mono text-gray-400">
+                每月目標 MRR
+              </span>
+            </div>
+
+            <div className="space-y-2.5">
+              {edpResult.years.map((y) => {
+                const isCurrentActive = y.yearKey === edpResult.activeYearKey;
+                const mrrSpend = y.totalMonthCount > 0 ? (y.totalEdpAdjustedCost || 0) / y.totalMonthCount : 0;
+                const diff = mrrSpend - y.mrrTarget;
+                const isOver = diff >= 0;
+                return (
+                  <div key={y.yearKey} className="bg-gray-900/60 p-2 rounded-lg border border-gray-700/50">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-bold font-mono ${isCurrentActive ? 'text-indigo-400' : 'text-gray-300'}`}>
+                          {y.yearKey}
+                        </span>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          (目標 {formatShortCurrency(y.mrrTarget)})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 font-mono">
+                        <span className="text-white font-bold">{formatShortCurrency(mrrSpend)}/月</span>
+                        <span className={`text-[10px] px-1 py-0.2 rounded font-bold ${
+                          isOver ? 'text-emerald-400 bg-emerald-950/60' : 'text-rose-400 bg-rose-950/60'
+                        }`}>
+                          {formatVarianceText(diff)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* 控制與檢視模式切換列 */}
@@ -663,20 +867,20 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
         <div className="space-y-8">
           {/* 圖表 1: 每月 EDP 實際與預估費用 vs 合約 MRR 目標 (直接顯示數字) */}
           <Card title="每月 EDP 實際與預估費用 vs 合約 MRR 目標對比 (Direct Numbered Chart)">
-            <div className="text-xs text-gray-400 mb-4 flex flex-wrap items-center justify-between gap-3">
-              <span>柱子與折線直接標註各月份之實際金額、預估金額與合約目標 (單位: USD)</span>
+            <div className="text-xs text-gray-300 mb-4 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-gray-200 font-medium">柱子與折線直接標註各月份之實際金額、預估金額與合約目標 (單位: USD)</span>
               <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 bg-blue-500 rounded-sm"></span>
-                  <span className="text-gray-300">歷史實際花費 (89折後+Marketplace)</span>
+                  <span className="text-gray-100 font-medium">歷史實際花費 (89折後+Marketplace)</span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 bg-cyan-400 rounded-sm"></span>
-                  <span className="text-cyan-300">未來預估用量 (成長+自訂專案)</span>
+                  <span className="text-cyan-200 font-medium">未來預估用量 (成長+自訂專案)</span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-1 bg-amber-400"></span>
-                  <span className="text-amber-300">合約 MRR 目標</span>
+                  <span className="text-amber-300 font-bold">合約 MRR 目標</span>
                 </span>
               </div>
             </div>
@@ -685,26 +889,28 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={monthlyChartData}
-                  margin={{ top: 28, right: 30, left: 20, bottom: 20 }}
+                  margin={{ top: 32, right: 30, left: 20, bottom: 20 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis 
                     dataKey="month" 
                     stroke="#9ca3af" 
-                    tick={{ fill: '#d1d5db', fontSize: 11 }} 
+                    tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} 
                     interval={monthlyChartData.length > 24 ? 1 : 0}
                   />
                   <YAxis 
                     stroke="#9ca3af" 
-                    tick={{ fill: '#d1d5db', fontSize: 12 }} 
+                    tick={{ fill: '#f3f4f6', fontSize: 12 }} 
                     tickFormatter={(val) => formatShortCurrency(val)}
                   />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#1f2937', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#f3f4f6' }}
+                    contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                    itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                    labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                     formatter={(val: number, name: string) => [formatCurrency(val), name]}
                     labelFormatter={(label) => `計費月份: ${label}`}
                   />
-                  <Legend />
+                  <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px' }} />
                   <Bar 
                     dataKey="totalEdpAdjustedCost" 
                     name="EDP 費用 (實際/預估)" 
@@ -713,8 +919,9 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     <LabelList 
                       dataKey="displayActual" 
                       position="top" 
-                      fill="#e0f2fe" 
-                      fontSize={10} 
+                      offset={8}
+                      fill="#ffffff" 
+                      fontSize={11} 
                       fontWeight="bold" 
                     />
                     {monthlyChartData.map((entry, index) => (
@@ -739,8 +946,9 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     <LabelList 
                       dataKey="displayTarget" 
                       position="top" 
-                      fill="#fbbf24" 
-                      fontSize={9} 
+                      offset={8}
+                      fill="#fef08a" 
+                      fontSize={11} 
                       fontWeight="bold"
                     />
                   </Line>
@@ -752,37 +960,40 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
           {/* 圖表 2: 每月差異額 (Variance: 實際/預估 - 目標) 與達成率 (直接顯示數字) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card title="每月差異額 (Variance = 實際/預估 - 目標) 直接標記圖">
-              <div className="text-xs text-gray-400 mb-4">
+              <div className="text-xs text-gray-300 mb-4 font-medium">
                 正值 (綠色) 代表超額/達標；負值 (紅色) 代表未達合約每月 MRR 承諾額
               </div>
               <div className="h-80 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={monthlyChartData}
-                    margin={{ top: 25, right: 20, left: 10, bottom: 20 }}
+                    margin={{ top: 28, right: 20, left: 10, bottom: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis 
                       dataKey="month" 
                       stroke="#9ca3af" 
-                      tick={{ fill: '#d1d5db', fontSize: 10 }}
+                      tick={{ fill: '#f3f4f6', fontSize: 10, fontWeight: 'bold' }}
                       interval={monthlyChartData.length > 24 ? 1 : 0}
                     />
                     <YAxis 
                       stroke="#9ca3af" 
-                      tick={{ fill: '#d1d5db', fontSize: 11 }}
+                      tick={{ fill: '#f3f4f6', fontSize: 11 }}
                       tickFormatter={(val) => formatShortCurrency(val)}
                     />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#1f2937', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#f3f4f6' }}
+                      contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                       formatter={(val: number) => [formatVarianceText(val), '差異額 (Variance)']}
                     />
                     <Bar dataKey="variance" name="月度差異額 (Variance)" radius={[4, 4, 0, 0]}>
                       <LabelList 
                         dataKey="displayVariance" 
                         position="top" 
-                        fill="#f3f4f6" 
-                        fontSize={10} 
+                        offset={6}
+                        fill="#ffffff" 
+                        fontSize={11} 
                         fontWeight="bold"
                       />
                       {monthlyChartData.map((entry, index) => (
@@ -798,45 +1009,48 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
             </Card>
 
             <Card title="每月合約達成率 (Achievement Rate %) 直接標記圖">
-              <div className="text-xs text-gray-400 mb-4">
+              <div className="text-xs text-gray-300 mb-4 font-medium">
                 基準線 100% 代表完全達成該月 MRR 目標
               </div>
               <div className="h-80 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={monthlyChartData}
-                    margin={{ top: 25, right: 20, left: 10, bottom: 20 }}
+                    margin={{ top: 28, right: 20, left: 10, bottom: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis 
                       dataKey="month" 
                       stroke="#9ca3af" 
-                      tick={{ fill: '#d1d5db', fontSize: 10 }}
+                      tick={{ fill: '#f3f4f6', fontSize: 10, fontWeight: 'bold' }}
                       interval={monthlyChartData.length > 24 ? 1 : 0}
                     />
                     <YAxis 
                       stroke="#9ca3af" 
-                      tick={{ fill: '#d1d5db', fontSize: 11 }}
+                      tick={{ fill: '#f3f4f6', fontSize: 11 }}
                       tickFormatter={(val) => `${val}%`}
                       domain={[0, 'auto']}
                     />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#1f2937', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#f3f4f6' }}
+                      contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                       formatter={(val: number) => [`${val}%`, '月度達成率']}
                     />
                     <Line 
                       type="monotone" 
                       dataKey="achievementRate" 
                       name="達成率 (%)" 
-                      stroke="#8b5cf6" 
+                      stroke="#a855f7" 
                       strokeWidth={3} 
-                      dot={{ r: 4, fill: '#8b5cf6' }}
+                      dot={{ r: 4, fill: '#a855f7' }}
                     >
                       <LabelList 
                         dataKey="displayAchievement" 
                         position="top" 
-                        fill="#c084fc" 
-                        fontSize={10} 
+                        offset={6}
+                        fill="#e9d5ff" 
+                        fontSize={11} 
                         fontWeight="bold"
                       />
                     </Line>
@@ -932,20 +1146,20 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
         <div className="space-y-8">
           {/* 圖表 1: 各年度累計實際/預估 vs 年度目標 (直接顯示數字) */}
           <Card title="各年度 EDP 累計與預估費用 vs 年度承諾目標 ($M USD) 直接標記圖">
-            <div className="text-xs text-gray-400 mb-4 flex flex-wrap items-center justify-between gap-3">
-              <span>直接在柱子上顯示金額與達成進度 (單位: 百萬 USD, $M)</span>
+            <div className="text-xs text-gray-300 mb-4 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-gray-200 font-medium">直接在柱子上顯示金額與達成進度 (單位: 百萬 USD, $M)</span>
               <div className="flex items-center gap-4 text-xs font-mono">
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 bg-blue-500 rounded-sm"></span>
-                  <span className="text-gray-300">歷史實際花費</span>
+                  <span className="text-gray-100 font-medium">歷史實際花費</span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 bg-cyan-400 rounded-sm"></span>
-                  <span className="text-cyan-300">未來預估增量</span>
+                  <span className="text-cyan-200 font-medium">未來預估增量</span>
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 bg-gray-600 rounded-sm"></span>
-                  <span className="text-gray-300">年度承諾總目標</span>
+                  <span className="w-3 h-3 bg-amber-500 rounded-sm"></span>
+                  <span className="text-amber-300 font-bold">年度承諾總目標</span>
                 </span>
               </div>
             </div>
@@ -954,20 +1168,22 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={yearlyChartData}
-                  margin={{ top: 28, right: 30, left: 20, bottom: 20 }}
+                  margin={{ top: 32, right: 30, left: 20, bottom: 20 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                  <XAxis dataKey="yearKey" stroke="#9ca3af" tick={{ fill: '#d1d5db', fontSize: 13, fontWeight: 'bold' }} />
+                  <XAxis dataKey="yearKey" stroke="#9ca3af" tick={{ fill: '#f9fafb', fontSize: 13, fontWeight: 'bold' }} />
                   <YAxis 
                     stroke="#9ca3af" 
-                    tick={{ fill: '#d1d5db', fontSize: 12 }} 
+                    tick={{ fill: '#f3f4f6', fontSize: 12 }} 
                     tickFormatter={(val) => `$${val}M`}
                   />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#1f2937', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#f3f4f6' }}
+                    contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                    itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                    labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                     formatter={(val: number, name: string) => [`$${val}M (USD)`, name]}
                   />
-                  <Legend />
+                  <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px' }} />
                   <Bar 
                     dataKey="actualInM" 
                     name="歷史實際費用 ($M)" 
@@ -985,22 +1201,24 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     <LabelList 
                       dataKey="displayCombined" 
                       position="top" 
+                      offset={8}
                       fill="#67e8f9" 
-                      fontSize={12} 
+                      fontSize={13} 
                       fontWeight="bold" 
                     />
                   </Bar>
                   <Bar 
                     dataKey="annualTargetInM" 
                     name="年度承諾目標 ($M)" 
-                    fill="#4b5563" 
+                    fill="#f59e0b" 
                     radius={[6, 6, 0, 0]}
                   >
                     <LabelList 
                       dataKey="displayTarget" 
                       position="top" 
-                      fill="#9ca3af" 
-                      fontSize={12} 
+                      offset={8}
+                      fill="#fef08a" 
+                      fontSize={13} 
                       fontWeight="bold" 
                     />
                   </Bar>
@@ -1011,10 +1229,10 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
 
           {/* 全期間 3 年累計走勢圖 */}
           <Card title="全期間累計花費 (實際+預估) vs $20M 合約目標走勢 (3-Year Cumulative Trend)">
-            <div className="text-xs text-gray-400 mb-4 flex items-center justify-between">
-              <span>實線代表歷史實際花費累計，虛線代表未來預估成長軌跡，並標記合約累計線</span>
+            <div className="text-xs text-gray-300 mb-4 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-gray-200 font-medium">實線代表歷史實際花費累計，虛線代表未來預估成長軌跡，並標記合約累計線</span>
               {edpResult.targetFulfillmentMonth && (
-                <span className="text-emerald-400 font-bold bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                <span className="text-emerald-300 font-bold bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-500/40">
                   🎯 預計於 {edpResult.targetFulfillmentMonth} 達到 3 年 $20M 總承諾目標！
                 </span>
               )}
@@ -1023,25 +1241,27 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={cumulativeTrendData}
-                  margin={{ top: 25, right: 30, left: 20, bottom: 20 }}
+                  margin={{ top: 28, right: 30, left: 20, bottom: 20 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis 
                     dataKey="month" 
                     stroke="#9ca3af" 
-                    tick={{ fill: '#d1d5db', fontSize: 11 }} 
+                    tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} 
                     interval={cumulativeTrendData.length > 24 ? 2 : 0}
                   />
                   <YAxis 
                     stroke="#9ca3af" 
-                    tick={{ fill: '#d1d5db', fontSize: 11 }}
+                    tick={{ fill: '#f3f4f6', fontSize: 11 }}
                     tickFormatter={(val) => formatShortCurrency(val)}
                   />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#1f2937', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#f3f4f6' }}
+                    contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                    itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                    labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                     formatter={(val: number) => [formatCurrency(val), '累計金額']}
                   />
-                  <Legend />
+                  <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px' }} />
                   <Line 
                     type="monotone" 
                     dataKey="cumulativeActual" 
@@ -1053,8 +1273,9 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     <LabelList 
                       dataKey="displayActual" 
                       position="top" 
+                      offset={8}
                       fill="#67e8f9" 
-                      fontSize={9} 
+                      fontSize={11} 
                       fontWeight="bold"
                     />
                   </Line>
@@ -1174,47 +1395,113 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
       {/* ========================================================================= */}
       {viewMode === 'projects' && (
         <div className="space-y-6">
+          {/* Pipeline 關鍵總結指標卡片 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-gray-900/80 p-4 rounded-xl border border-indigo-500/30">
+              <span className="text-xs font-bold text-indigo-400">① 專案 Pipeline 啟用狀態</span>
+              <div className="text-2xl font-bold text-white mt-1 font-mono">
+                {pipelineSummary.enabledProjectsCount} <span className="text-sm font-normal text-gray-400">/ {pipelineSummary.totalProjectsCount} 個啟用</span>
+              </div>
+              <div className="text-[11px] text-gray-400 mt-1">
+                預估期間: {forecastStartMonth} ~ {contractEndMonth} (共 {edpResult.forecastMonthCount} 個月)
+              </div>
+            </div>
+
+            <div className="bg-gray-900/80 p-4 rounded-xl border border-cyan-500/30">
+              <span className="text-xs font-bold text-cyan-400">② 每月新增預估金額</span>
+              <div className="text-2xl font-bold text-cyan-300 mt-1 font-mono">
+                {formatCurrency(pipelineSummary.totalMonthlyAdjusted)} <span className="text-xs font-normal text-gray-400">/月 (折後)</span>
+              </div>
+              <div className="text-[11px] text-gray-400 mt-1">
+                原始月預估 {formatShortCurrency(pipelineSummary.totalMonthlyRaw)}，每月節省 {formatShortCurrency(pipelineSummary.totalMonthlyRaw - pipelineSummary.totalMonthlyAdjusted)}
+              </div>
+            </div>
+
+            <div className="bg-gray-900/80 p-4 rounded-xl border border-blue-500/30">
+              <span className="text-xs font-bold text-blue-400">③ 合約期滿累計原始總額</span>
+              <div className="text-2xl font-bold text-blue-300 mt-1 font-mono">
+                {formatCurrency(pipelineSummary.totalLifetimeRaw)}
+              </div>
+              <div className="text-[11px] text-gray-400 mt-1">
+                自各專案上線起至 3 年合約期滿之原始累計金額
+              </div>
+            </div>
+
+            <div className="bg-gray-900/80 p-4 rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/20 to-gray-900/80">
+              <span className="text-xs font-bold text-emerald-400">④ 合約期滿累計 EDP 折後總貢獻</span>
+              <div className="text-2xl font-bold text-emerald-300 mt-1 font-mono">
+                {formatCurrency(pipelineSummary.totalLifetimeAdjusted)}
+              </div>
+              <div className="text-[11px] text-emerald-400 font-semibold mt-1">
+                貢獻 3 年總目標 {pipelineSummary.totalCommitmentRate.toFixed(2)}% (累計省 {formatShortCurrency(pipelineSummary.totalLifetimeSavings)})
+              </div>
+            </div>
+          </div>
+
           <Card title="新增預期工作負載與專案貢獻統計 (Projected Workload Pipeline)">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
               <span className="text-xs text-gray-400">
-                此處彙整使用者輸入的所有未來預期專案，分析其在 EDP 承諾中之累計貢獻金額。
+                此處彙整使用者輸入的所有未來預期專案，分析自各專案起始月份至 3 年合約期滿（{contractEndMonth}）之原始與 EDP 折後累計貢獻金額。可在此直接新增、修改編輯、啟用/停用或刪除專案。
               </span>
-              <button
-                type="button"
-                onClick={handleExportProjects}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow"
-              >
-                📥 匯出專案清單 Excel
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenAddProjectInTab}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow whitespace-nowrap flex items-center gap-1"
+                >
+                  <span>➕ 新增預期專案</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportProjects}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow whitespace-nowrap flex items-center gap-1"
+                >
+                  <span>📥 匯出 Excel</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left text-gray-300">
                 <thead className="text-[11px] text-gray-400 uppercase bg-gray-900/80 border-b border-gray-700 font-semibold">
                   <tr>
-                    <th className="px-4 py-3">專案名稱</th>
-                    <th className="px-4 py-3">分類</th>
-                    <th className="px-4 py-3">狀態</th>
-                    <th className="px-4 py-3">起始月份</th>
-                    <th className="px-4 py-3">結束月份</th>
-                    <th className="px-4 py-3 text-right">原始月預估 (USD)</th>
-                    <th className="px-4 py-3 text-right text-emerald-400 font-bold">EDP 折後計價 (USD)</th>
-                    <th className="px-4 py-3">計價模式</th>
-                    <th className="px-4 py-3">專案備註</th>
+                    <th className="px-3.5 py-3">專案名稱</th>
+                    <th className="px-3 py-3">分類</th>
+                    <th className="px-3 py-3">狀態</th>
+                    <th className="px-3 py-3">起始月份</th>
+                    <th className="px-3 py-3">結束月份</th>
+                    <th className="px-3 py-3 text-center">涵蓋月數</th>
+                    <th className="px-3.5 py-3 text-right">原始月預估 (USD)</th>
+                    <th className="px-3.5 py-3 text-right text-cyan-300 font-bold">EDP 折後月計價 (USD)</th>
+                    <th className="px-3.5 py-3 text-right text-blue-300 font-bold bg-blue-950/20">合約期滿累計原始總額 (USD)</th>
+                    <th className="px-3.5 py-3 text-right text-emerald-400 font-extrabold bg-emerald-950/30">合約期滿累計 EDP 折後貢獻 (USD)</th>
+                    <th className="px-3 py-3 text-right text-indigo-300 font-bold">佔總合約比例</th>
+                    <th className="px-3 py-3">計價模式</th>
+                    <th className="px-3 py-3">專案備註</th>
+                    <th className="px-3 py-3 text-center">操作 / 編輯</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700/60 font-mono">
                   {(forecastSettings.projectedProjects || []).map((p) => {
-                    const discountedAmount = p.isDiscounted ? p.monthlyAmount * config.discountRate : p.monthlyAmount;
+                    const projStart = p.startMonth || forecastStartMonth;
+                    const projEnd = p.endMonth || contractEndMonth;
+                    const activeCount = edpResult.forecastMonths.filter(m => m.month >= projStart && m.month <= projEnd).length;
+                    
+                    const rawMonthly = Number(p.monthlyAmount) || 0;
+                    const discountedMonthly = p.isDiscounted ? rawMonthly * config.discountRate : rawMonthly;
+                    const lifetimeRaw = rawMonthly * activeCount;
+                    const lifetimeAdjusted = discountedMonthly * activeCount;
+                    const targetPercent = edpResult.total3YearCommitment > 0 ? (lifetimeAdjusted / edpResult.total3YearCommitment) * 100 : 0;
+
                     return (
-                      <tr key={p.id} className="hover:bg-gray-700/40 transition">
-                        <td className="px-4 py-3 font-bold text-white font-sans text-sm">{p.name}</td>
-                        <td className="px-4 py-3 font-sans">
-                          <span className="px-2 py-0.5 bg-indigo-950 text-indigo-300 text-[10px] font-semibold rounded border border-indigo-500/30">
+                      <tr key={p.id} className={`hover:bg-gray-700/40 transition ${!p.enabled ? 'opacity-60 bg-gray-900/30' : ''}`}>
+                        <td className="px-3.5 py-3 font-bold text-white font-sans text-sm">{p.name}</td>
+                        <td className="px-3 py-3 font-sans">
+                          <span className="px-2 py-0.5 bg-indigo-950 text-indigo-300 text-[10px] font-semibold rounded border border-indigo-500/30 whitespace-nowrap">
                             {p.category || '專案'}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-sans">
+                        <td className="px-3 py-3 font-sans whitespace-nowrap">
                           {p.enabled ? (
                             <span className="px-2 py-0.5 bg-emerald-950 text-emerald-300 text-[10px] font-semibold rounded border border-emerald-500/30">
                               已啟用
@@ -1225,23 +1512,97 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-gray-300">{p.startMonth || '接續起始'}</td>
-                        <td className="px-4 py-3 text-gray-400">{p.endMonth || '持續至期滿'}</td>
-                        <td className="px-4 py-3 text-right text-gray-300">{formatCurrency(p.monthlyAmount)}</td>
-                        <td className="px-4 py-3 text-right text-emerald-400 font-bold text-sm">
-                          {formatCurrency(discountedAmount)}
+                        <td className="px-3 py-3 text-gray-300 whitespace-nowrap">{p.startMonth || `接續 (${forecastStartMonth})`}</td>
+                        <td className="px-3 py-3 text-gray-400 whitespace-nowrap">{p.endMonth || `持續至期滿 (${contractEndMonth})`}</td>
+                        <td className="px-3 py-3 text-center text-gray-300 font-sans">{activeCount} 個月</td>
+                        <td className="px-3.5 py-3 text-right text-gray-300">{formatCurrency(rawMonthly)}</td>
+                        <td className="px-3.5 py-3 text-right text-cyan-300 font-bold">
+                          {formatCurrency(discountedMonthly)}
                         </td>
-                        <td className="px-4 py-3 font-sans text-xs">
+                        <td className="px-3.5 py-3 text-right text-blue-300 font-bold bg-blue-950/10">
+                          {formatCurrency(lifetimeRaw)}
+                        </td>
+                        <td className="px-3.5 py-3 text-right text-emerald-400 font-extrabold text-sm bg-emerald-950/20">
+                          {formatCurrency(lifetimeAdjusted)}
+                        </td>
+                        <td className="px-3 py-3 text-right text-indigo-300 font-bold">
+                          {targetPercent.toFixed(2)}%
+                        </td>
+                        <td className="px-3 py-3 font-sans text-xs whitespace-nowrap">
                           {p.isDiscounted ? (
                             <span className="text-emerald-300">89 折計價 (*89%)</span>
                           ) : (
                             <span className="text-cyan-300">Marketplace 100%</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 font-sans text-gray-400">{p.notes || '-'}</td>
+                        <td className="px-3 py-3 font-sans text-gray-400 max-w-[200px] truncate" title={p.notes}>{p.notes || '-'}</td>
+                        <td className="px-3 py-3 font-sans whitespace-nowrap text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditProjectInTab(p)}
+                              className="px-2 py-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-500/40 rounded text-xs transition"
+                              title="修改編輯專案內容"
+                            >
+                              ✏️ 編輯
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleProjectInTab(p.id)}
+                              className={`px-2 py-1 rounded text-xs transition border ${
+                                p.enabled
+                                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900'
+                                  : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'
+                              }`}
+                              title={p.enabled ? '點擊停用此專案' : '點擊啟用此專案'}
+                            >
+                              {p.enabled ? '關閉' : '啟用'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteProjectInTab(p.id)}
+                              className="p-1 text-gray-400 hover:text-rose-400 text-xs transition"
+                              title="刪除此專案"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
+
+                  {/* 合計總結列 (Pipeline Total Row) */}
+                  <tr className="bg-gray-900/90 font-bold border-t-2 border-indigo-500/50">
+                    <td className="px-3.5 py-3.5 text-indigo-300 font-sans text-sm">
+                      合計 (已啟用 {pipelineSummary.enabledProjectsCount} 個專案)
+                    </td>
+                    <td className="px-3 py-3.5 text-gray-400 font-sans">-</td>
+                    <td className="px-3 py-3.5 font-sans">
+                      <span className="px-2 py-0.5 bg-indigo-900/60 text-indigo-200 text-[10px] font-bold rounded border border-indigo-500/50">
+                        {pipelineSummary.enabledProjectsCount} / {pipelineSummary.totalProjectsCount} 啟用
+                      </span>
+                    </td>
+                    <td className="px-3 py-3.5 text-gray-300">{forecastStartMonth}</td>
+                    <td className="px-3 py-3.5 text-gray-300">{contractEndMonth}</td>
+                    <td className="px-3 py-3.5 text-center text-white font-sans">{edpResult.forecastMonthCount} 個月</td>
+                    <td className="px-3.5 py-3.5 text-right text-gray-300 text-sm">{formatCurrency(pipelineSummary.totalMonthlyRaw)}</td>
+                    <td className="px-3.5 py-3.5 text-right text-cyan-300 text-sm font-bold">{formatCurrency(pipelineSummary.totalMonthlyAdjusted)}</td>
+                    <td className="px-3.5 py-3.5 text-right text-blue-300 text-sm font-bold bg-blue-950/40">
+                      {formatCurrency(pipelineSummary.totalLifetimeRaw)}
+                    </td>
+                    <td className="px-3.5 py-3.5 text-right text-emerald-300 text-base font-extrabold bg-emerald-950/40">
+                      {formatCurrency(pipelineSummary.totalLifetimeAdjusted)}
+                    </td>
+                    <td className="px-3.5 py-3.5 text-right text-indigo-300 text-sm font-extrabold">
+                      {pipelineSummary.totalCommitmentRate.toFixed(2)}%
+                    </td>
+                    <td className="px-3 py-3.5 text-gray-400 font-sans" colSpan={3}>
+                      <span className="text-[11px] text-emerald-300">
+                        全期累計折後節省: {formatCurrency(pipelineSummary.totalLifetimeSavings)}
+                      </span>
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -1479,6 +1840,148 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow"
               >
                 套用並關閉
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新增 / 編輯預期用量專案 Modal */}
+      {showProjectModalInTab && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-gray-800 rounded-2xl border border-indigo-500/50 shadow-2xl max-w-lg w-full p-6 space-y-5">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-700">
+              <h4 className="text-base font-bold text-white flex items-center gap-2">
+                <span>
+                  {editingProjectInTab ? '✏️ 修改 / 編輯預期用量專案 (Edit Project)' : '➕ 新增未來預期用量專案 (Workload Addition)'}
+                </span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProjectModalInTab(false);
+                  setEditingProjectInTab(null);
+                }}
+                className="text-gray-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-gray-300 font-semibold mb-1">專案 / 系統名稱:</label>
+                <input
+                  type="text"
+                  placeholder="例: Amazon Bedrock GenAI 導入專案"
+                  value={projNameInTab}
+                  onChange={(e) => setProjNameInTab(e.target.value)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-xs focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-300 font-semibold mb-1">業務分類 (Category):</label>
+                  <select
+                    value={projCategoryInTab}
+                    onChange={(e) => setProjCategoryInTab(e.target.value)}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-xs"
+                  >
+                    <option value="AI / GenAI">AI / GenAI (Bedrock, SageMaker)</option>
+                    <option value="Migration">雲端系統搬遷 (Migration / Rehost)</option>
+                    <option value="Data Lake">資料湖與分析 (Data Lake / OpenSearch)</option>
+                    <option value="Global Expansion">海外新業務擴展 (Global Expansion)</option>
+                    <option value="Marketplace">Marketplace 第三方軟體訂閱</option>
+                    <option value="Other">其他工作負載 (Other)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-gray-300 font-semibold mb-1">每月預估費用 (USD):</label>
+                  <input
+                    type="number"
+                    step="1000"
+                    placeholder="30000"
+                    value={projAmountInTab}
+                    onChange={(e) => setProjAmountInTab(Number(e.target.value))}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white font-mono text-xs focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-300 font-semibold mb-1">預計起始月份:</label>
+                  <select
+                    value={projStartMonthInTab}
+                    onChange={(e) => setProjStartMonthInTab(e.target.value)}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-xs"
+                  >
+                    {projStartMonthInTab && !futureMonthsList.includes(projStartMonthInTab) && (
+                      <option value={projStartMonthInTab}>{projStartMonthInTab} 起始 (自訂/既有)</option>
+                    )}
+                    {futureMonthsList.map((m) => (
+                      <option key={m} value={m}>{m} 起始</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-gray-300 font-semibold mb-1">結束月份 (選填，留空為持續):</label>
+                  <input
+                    type="text"
+                    placeholder="YYYY-MM (可留空)"
+                    value={projEndMonthInTab}
+                    onChange={(e) => setProjEndMonthInTab(e.target.value)}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={projIsDiscountedInTab}
+                    onChange={(e) => setProjIsDiscountedInTab(e.target.checked)}
+                    className="rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="text-gray-300 font-medium">
+                    享有一般 AWS 服務 89 折 EDP 折扣 (若為 Marketplace 第三方市集請取消勾選維持 100% 原價)
+                  </span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-gray-300 font-semibold mb-1">專案備註說明:</label>
+                <textarea
+                  rows={2}
+                  placeholder="簡短描述此專案預期使用之 AWS 服務或上線時程..."
+                  value={projNotesInTab}
+                  onChange={(e) => setProjNotesInTab(e.target.value)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-xs"
+                ></textarea>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-gray-700">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProjectModalInTab(false);
+                  setEditingProjectInTab(null);
+                }}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-semibold rounded-lg"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveProjectInTab}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow flex items-center gap-1.5"
+              >
+                <span>{editingProjectInTab ? '💾 儲存修改' : '確認新增'}</span>
               </button>
             </div>
           </div>

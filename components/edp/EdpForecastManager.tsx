@@ -23,8 +23,9 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'model' | 'projects' | 'monthlyGrid'>('projects');
   
-  // New Project Form State
+  // Project Form & Edit State
   const [showAddProjectModal, setShowAddProjectModal] = useState<boolean>(false);
+  const [editingProject, setEditingProject] = useState<EdpProjectedItem | null>(null);
   const [newProjectName, setNewProjectName] = useState<string>('');
   const [newProjectCategory, setNewProjectCategory] = useState<string>('AI / GenAI');
   const [newProjectStartMonth, setNewProjectStartMonth] = useState<string>(futureMonthsList[0] || '');
@@ -47,29 +48,82 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
     });
   };
 
-  const handleAddProject = () => {
+  const handleOpenAddModal = () => {
+    setEditingProject(null);
+    setNewProjectName('');
+    setNewProjectCategory('AI / GenAI');
+    setNewProjectStartMonth(futureMonthsList[0] || '');
+    setNewProjectEndMonth('');
+    setNewProjectAmount(30000);
+    setNewProjectIsDiscounted(true);
+    setNewProjectNotes('');
+    setShowAddProjectModal(true);
+  };
+
+  const handleOpenEditModal = (project: EdpProjectedItem) => {
+    setEditingProject(project);
+    setNewProjectName(project.name);
+    setNewProjectCategory(project.category || 'AI / GenAI');
+    setNewProjectStartMonth(project.startMonth || futureMonthsList[0] || '');
+    setNewProjectEndMonth(project.endMonth || '');
+    setNewProjectAmount(project.monthlyAmount);
+    setNewProjectIsDiscounted(project.isDiscounted ?? true);
+    setNewProjectNotes(project.notes || '');
+    setShowAddProjectModal(true);
+  };
+
+  const handleSaveProject = () => {
     if (!newProjectName.trim()) {
       alert('請輸入專案名稱');
       return;
     }
-    const newProj: EdpProjectedItem = {
-      id: `proj-${Date.now()}`,
-      name: newProjectName.trim(),
-      category: newProjectCategory,
-      startMonth: newProjectStartMonth || futureMonthsList[0] || '',
-      endMonth: newProjectEndMonth || undefined,
-      monthlyAmount: Number(newProjectAmount) || 0,
-      isDiscounted: newProjectIsDiscounted,
-      enabled: true,
-      notes: newProjectNotes.trim(),
-    };
+    const cleanStartMonth = newProjectStartMonth || futureMonthsList[0] || '';
+    const cleanEndMonth = newProjectEndMonth.trim() || undefined;
+    const cleanAmount = Number(newProjectAmount) || 0;
 
-    onChange({
-      ...settings,
-      projectedProjects: [...settings.projectedProjects, newProj],
-    });
+    if (editingProject) {
+      // Edit existing project
+      const updatedProjects = settings.projectedProjects.map((p) =>
+        p.id === editingProject.id
+          ? {
+              ...p,
+              name: newProjectName.trim(),
+              category: newProjectCategory,
+              startMonth: cleanStartMonth,
+              endMonth: cleanEndMonth,
+              monthlyAmount: cleanAmount,
+              isDiscounted: newProjectIsDiscounted,
+              notes: newProjectNotes.trim(),
+            }
+          : p
+      );
+
+      onChange({
+        ...settings,
+        projectedProjects: updatedProjects,
+      });
+    } else {
+      // Add new project
+      const newProj: EdpProjectedItem = {
+        id: `proj-${Date.now()}`,
+        name: newProjectName.trim(),
+        category: newProjectCategory,
+        startMonth: cleanStartMonth,
+        endMonth: cleanEndMonth,
+        monthlyAmount: cleanAmount,
+        isDiscounted: newProjectIsDiscounted,
+        enabled: true,
+        notes: newProjectNotes.trim(),
+      };
+
+      onChange({
+        ...settings,
+        projectedProjects: [...settings.projectedProjects, newProj],
+      });
+    }
 
     // Reset Form
+    setEditingProject(null);
     setNewProjectName('');
     setNewProjectAmount(30000);
     setNewProjectNotes('');
@@ -241,7 +295,7 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowAddProjectModal(true)}
+                    onClick={handleOpenAddModal}
                     className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow transition flex items-center gap-1.5"
                   >
                     <span>➕ 新增預期用量專案</span>
@@ -322,8 +376,16 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                             {p.notes && <p className="text-gray-400 text-xs mt-1">{p.notes}</p>}
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <label className="relative inline-flex items-center cursor-pointer">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditModal(p)}
+                              className="px-2 py-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-500/40 rounded text-xs transition flex items-center gap-1 font-sans"
+                              title="修改編輯此專案"
+                            >
+                              <span>✏️ 編輯</span>
+                            </button>
+                            <label className="relative inline-flex items-center cursor-pointer ml-1">
                               <input 
                                 type="checkbox" 
                                 checked={p.enabled} 
@@ -335,7 +397,7 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                             <button
                               type="button"
                               onClick={() => handleDeleteProject(p.id)}
-                              className="text-gray-500 hover:text-rose-400 p-1 text-xs transition"
+                              className="text-gray-500 hover:text-rose-400 p-1 text-xs transition ml-0.5"
                               title="刪除此專案"
                             >
                               🗑️
@@ -345,8 +407,10 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
 
                         <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-gray-800 text-xs">
                           <div>
-                            <span className="text-gray-400 block text-[11px]">起始月份</span>
-                            <strong className="text-gray-200 font-mono">{p.startMonth || '接續最後月'}</strong>
+                            <span className="text-gray-400 block text-[11px]">起始 / 結束月份</span>
+                            <strong className="text-gray-200 font-mono text-[11px] block">
+                              {p.startMonth || '接續起始'} ~ {p.endMonth || '持續至期滿'}
+                            </strong>
                           </div>
                           <div>
                             <span className="text-gray-400 block text-[11px]">原始月預估</span>
@@ -361,6 +425,26 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                             </strong>
                           </div>
                         </div>
+
+                        {/* 合約期滿累計貢獻統計 (Lifetime Contribution) */}
+                        {(() => {
+                          const projStart = p.startMonth || futureMonthsList[0] || '';
+                          const projEnd = p.endMonth || futureMonthsList[futureMonthsList.length - 1] || '';
+                          const activeCount = futureMonthsList.filter(m => (!projStart || m >= projStart) && (!projEnd || m <= projEnd)).length;
+                          const lifetimeRaw = (Number(p.monthlyAmount) || 0) * activeCount;
+                          const lifetimeAdjusted = (p.isDiscounted ? (Number(p.monthlyAmount) || 0) * discountRate : (Number(p.monthlyAmount) || 0)) * activeCount;
+                          return (
+                            <div className="mt-2.5 pt-2.5 border-t border-gray-800/80 flex items-center justify-between text-[11px] bg-gray-950/40 px-2.5 py-1.5 rounded-lg border border-gray-800">
+                              <span className="text-gray-400">
+                                累計至合約期滿 ({activeCount} 個月):
+                              </span>
+                              <div className="font-mono text-right">
+                                <span className="text-gray-400 mr-2 text-[10px]">原始: {formatCurrency(lifetimeRaw)}</span>
+                                <span className="text-emerald-300 font-bold">折後: {formatCurrency(lifetimeAdjusted)}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -543,17 +627,22 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
         </div>
       )}
 
-      {/* 新增專案 Modal */}
+      {/* 新增 / 編輯專案 Modal */}
       {showAddProjectModal && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-800 rounded-2xl border border-indigo-500/50 shadow-2xl max-w-lg w-full p-6 space-y-5">
             <div className="flex justify-between items-center pb-3 border-b border-gray-700">
               <h4 className="text-base font-bold text-white flex items-center gap-2">
-                <span>➕ 新增未來預期用量專案 (Workload Addition)</span>
+                <span>
+                  {editingProject ? '✏️ 修改 / 編輯預期用量專案 (Edit Project)' : '➕ 新增未來預期用量專案 (Workload Addition)'}
+                </span>
               </h4>
               <button
                 type="button"
-                onClick={() => setShowAddProjectModal(false)}
+                onClick={() => {
+                  setShowAddProjectModal(false);
+                  setEditingProject(null);
+                }}
                 className="text-gray-400 hover:text-white text-lg font-bold"
               >
                 ✕
@@ -610,6 +699,9 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                     onChange={(e) => setNewProjectStartMonth(e.target.value)}
                     className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-xs"
                   >
+                    {newProjectStartMonth && !futureMonthsList.includes(newProjectStartMonth) && (
+                      <option value={newProjectStartMonth}>{newProjectStartMonth} 起始 (自訂/既有)</option>
+                    )}
                     {futureMonthsList.map((m) => (
                       <option key={m} value={m}>{m} 起始</option>
                     ))}
@@ -657,17 +749,20 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
             <div className="flex justify-end gap-3 pt-3 border-t border-gray-700">
               <button
                 type="button"
-                onClick={() => setShowAddProjectModal(false)}
+                onClick={() => {
+                  setShowAddProjectModal(false);
+                  setEditingProject(null);
+                }}
                 className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-semibold rounded-lg"
               >
                 取消
               </button>
               <button
                 type="button"
-                onClick={handleAddProject}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow"
+                onClick={handleSaveProject}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow flex items-center gap-1.5"
               >
-                確認新增
+                <span>{editingProject ? '💾 儲存修改' : '確認新增'}</span>
               </button>
             </div>
           </div>

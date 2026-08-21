@@ -1267,10 +1267,12 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       ))}
                     </Pie>
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem' }}
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                       formatter={(value: number) => [`$${formatNumber(value)} (${((value / (rgtAnalysis.totalCost || 1)) * 100).toFixed(1)}%)`, '金額']}
                     />
-                    <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '12px' }} />
+                    <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '12px', color: '#f3f4f6' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -1280,12 +1282,14 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
               <h4 className="text-sm font-bold text-gray-200 mb-2 text-center">創新與轉型 (T) 細項分佈 ($USD)</h4>
               <div className="h-56 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={rgtAnalysis.tBreakdown} layout="vertical" margin={{ top: 5, right: 30, left: 70, bottom: 5 }}>
+                  <BarChart data={rgtAnalysis.tBreakdown} layout="vertical" margin={{ top: 10, right: 35, left: 80, bottom: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" horizontal={false} />
-                    <XAxis type="number" stroke="#9ca3af" fontSize={11} />
-                    <YAxis dataKey="name" type="category" stroke="#9ca3af" fontSize={11} width={75} />
+                    <XAxis type="number" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} />
+                    <YAxis dataKey="name" type="category" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} width={80} />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem' }}
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                       formatter={(value: number) => [`$${formatNumber(value)} (${((value / (rgtAnalysis.totalCost || 1)) * 100).toFixed(2)}%)`, '金額']}
                     />
                     <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
@@ -1565,7 +1569,9 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       ))}
                     </Pie>
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '0.5rem' }}
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                       formatter={(value: number) => {
                         const total = categoryAnalysis.totalSpend;
                         const perc = total > 0 ? (value / total) * 100 : 0;
@@ -1594,13 +1600,15 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       color: c.meta.color
                     }))} 
                     layout="vertical" 
-                    margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                    margin={{ top: 10, right: 35, left: 65, bottom: 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" horizontal={false} />
-                    <XAxis type="number" stroke="#9ca3af" tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
-                    <YAxis dataKey="name" type="category" stroke="#e5e7eb" width={60} fontSize={12} fontWeight={600} />
+                    <XAxis type="number" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <YAxis dataKey="name" type="category" stroke="#e5e7eb" tick={{ fill: '#f9fafb', fontSize: 12, fontWeight: 'bold' }} width={65} />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '0.5rem' }}
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                       labelFormatter={(_, payload) => payload[0]?.payload?.fullName || ''}
                       formatter={(value: number) => [`$${formatNumber(value)}`, '總費用']}
                     />
@@ -1770,13 +1778,14 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
       <Card title={`Top 10 服務費用分佈 ${analysisMode === 'cumulative' ? '(全期間累計)' : `(${selectedMonth})`} - ${accountFilterSummaryText}`}>
         <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={top10ChartData} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" horizontal={false} />
-                    <XAxis type="number" stroke="#a0aec0" tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
-                    <YAxis dataKey="name" type="category" stroke="#a0aec0" width={115} fontSize={11} />
+                <BarChart data={top10ChartData} layout="vertical" margin={{ top: 10, right: 35, left: 130, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" horizontal={false} />
+                    <XAxis type="number" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <YAxis dataKey="name" type="category" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} width={125} />
                     <Tooltip 
-                        contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }}
-                        labelStyle={{ color: '#e2e8f0' }}
+                        contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                        itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                        labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                         formatter={(value: number, name, props) => [
                           `$${formatNumber(value)} (${props?.payload?.category ? `${props.payload.category} - ${CATEGORY_METAS[props.payload.category as ServiceCategory]?.name || ''}` : ''})`, 
                           'Total Cost'

@@ -291,13 +291,18 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <h4 className="text-lg font-semibold text-white mb-2">月度EC2費用趨勢 (Linux/Red Hat)</h4>
             <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={analysis.monthly} margin={{ top: 5, right: 30, left: 50, bottom: 5 }}>
+                    <LineChart data={analysis.monthly} margin={{ top: 20, right: 30, left: 60, bottom: 15 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-                        <XAxis dataKey="month" stroke="#a0aec0" />
-                        <YAxis stroke="#a0aec0" tickFormatter={(value) => formatCurrency(Number(value))} />
-                        <Tooltip contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }} labelStyle={{ color: '#e2e8f0' }} formatter={(value: number) => [formatCurrency(value), '費用']} />
-                        <Legend />
-                        <Line type="monotone" dataKey="linuxEc2Cost" name="Linux/RHEL EC2 Cost" stroke="#8884d8" />
+                        <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} tickFormatter={(value) => formatCurrency(Number(value))} />
+                        <Tooltip 
+                            contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
+                            itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                            labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
+                            formatter={(value: number) => [formatCurrency(value), '費用']} 
+                        />
+                        <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+                        <Line type="monotone" dataKey="linuxEc2Cost" name="Linux/RHEL EC2 Cost" stroke="#a78bfa" strokeWidth={3} activeDot={{ r: 7 }} />
                     </LineChart>
                 </ResponsiveContainer>
             </div>
@@ -334,16 +339,21 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <h4 className="text-lg font-semibold text-white mb-2">月度Graviton使用率趨勢</h4>
              <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={analysis.monthly} margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
+                    <ComposedChart data={analysis.monthly} margin={{ top: 20, right: 35, left: 60, bottom: 15 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-                        <XAxis dataKey="month" stroke="#a0aec0" />
-                        <YAxis yAxisId="left" stroke="#8884d8" label={{ value: 'Usage Hours', angle: -90, position: 'insideLeft', fill: '#8884d8' }} tickFormatter={(value) => formatInteger(Number(value))} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" label={{ value: 'Percentage (%)', angle: 90, position: 'insideRight', fill: '#82ca9d' }} />
-                        <Tooltip contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }} labelStyle={{ color: '#e2e8f0' }} formatter={(value: number, name: string) => [name.includes('Percentage') ? `${formatNumber(value)}%` : formatInteger(value), name]} />
-                        <Legend />
-                        <Bar yAxisId="left" dataKey="totalEc2Usage" name="Total EC2 Usage" fill="#4c51bf" />
-                        <Bar yAxisId="left" dataKey="gravitonUsage" name="Graviton Usage" fill="#9f7aea" />
-                        <Line yAxisId="right" type="monotone" dataKey="gravitonPercentage" name="Graviton Percentage" stroke="#82ca9d" />
+                        <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis yAxisId="left" stroke="#c084fc" tick={{ fill: '#f3f4f6', fontSize: 11 }} label={{ value: 'Usage Hours', angle: -90, position: 'insideLeft', fill: '#c084fc' }} tickFormatter={(value) => formatInteger(Number(value))} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#4ade80" tick={{ fill: '#f3f4f6', fontSize: 11 }} label={{ value: 'Percentage (%)', angle: 90, position: 'insideRight', fill: '#4ade80' }} />
+                        <Tooltip 
+                            contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
+                            itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                            labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
+                            formatter={(value: number, name: string) => [name.includes('Percentage') ? `${formatNumber(value)}%` : formatInteger(value), name]} 
+                        />
+                        <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+                        <Bar yAxisId="left" dataKey="totalEc2Usage" name="Total EC2 Usage" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                        <Bar yAxisId="left" dataKey="gravitonUsage" name="Graviton Usage" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                        <Line yAxisId="right" type="monotone" dataKey="gravitonPercentage" name="Graviton Percentage" stroke="#4ade80" strokeWidth={3} activeDot={{ r: 6 }} />
                     </ComposedChart>
                 </ResponsiveContainer>
             </div>
@@ -372,13 +382,18 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <h4 className="text-lg font-semibold text-white mb-2">月度Generative AI服務費用趨勢</h4>
              <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={analysis.monthly} margin={{ top: 5, right: 30, left: 50, bottom: 5 }}>
+                    <LineChart data={analysis.monthly} margin={{ top: 20, right: 30, left: 60, bottom: 15 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-                        <XAxis dataKey="month" stroke="#a0aec0" />
-                        <YAxis stroke="#a0aec0" tickFormatter={(value) => formatCurrency(Number(value))} />
-                        <Tooltip contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }} labelStyle={{ color: '#e2e8f0' }} formatter={(value: number) => [formatCurrency(value), '費用']} />
-                        <Legend />
-                        <Line type="monotone" dataKey="genAiCost" name="Generative AI Cost" stroke="#38b2ac" />
+                        <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} tickFormatter={(value) => formatCurrency(Number(value))} />
+                        <Tooltip 
+                            contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
+                            itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                            labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
+                            formatter={(value: number) => [formatCurrency(value), '費用']} 
+                        />
+                        <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+                        <Line type="monotone" dataKey="genAiCost" name="Generative AI Cost" stroke="#2dd4bf" strokeWidth={3} activeDot={{ r: 7 }} />
                     </LineChart>
                 </ResponsiveContainer>
             </div>
@@ -415,16 +430,21 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <h4 className="text-lg font-semibold text-white mb-2">月度RDS費用與佔比趨勢</h4>
              <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                     <ComposedChart data={analysis.monthly} margin={{ top: 5, right: 30, left: 50, bottom: 5 }}>
+                     <ComposedChart data={analysis.monthly} margin={{ top: 20, right: 35, left: 60, bottom: 15 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-                        <XAxis dataKey="month" stroke="#a0aec0" />
-                        <YAxis yAxisId="left" stroke="#ed8936" label={{ value: 'Cost (USD)', angle: -90, position: 'insideLeft', fill: '#ed8936' }} tickFormatter={(value) => formatCurrency(Number(value))} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#4299e1" label={{ value: 'Percentage (%)', angle: 90, position: 'insideRight', fill: '#4299e1' }} />
-                        <Tooltip contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }} labelStyle={{ color: '#e2e8f0' }} formatter={(value: number, name: string) => [name.includes('Percentage') ? `${formatNumber(value)}%` : formatCurrency(value), name]} />
-                        <Legend />
-                        <Bar yAxisId="left" dataKey="totalPayment" name="Total Payment" fill="#718096" />
-                        <Bar yAxisId="left" dataKey="rdsCost" name="RDS Cost" fill="#ed8936" />
-                        <Line yAxisId="right" type="monotone" dataKey="rdsPercentage" name="RDS Percentage" stroke="#4299e1" />
+                        <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis yAxisId="left" stroke="#fb923c" tick={{ fill: '#f3f4f6', fontSize: 11 }} label={{ value: 'Cost (USD)', angle: -90, position: 'insideLeft', fill: '#fb923c' }} tickFormatter={(value) => formatCurrency(Number(value))} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#38bdf8" tick={{ fill: '#f3f4f6', fontSize: 11 }} label={{ value: 'Percentage (%)', angle: 90, position: 'insideRight', fill: '#38bdf8' }} />
+                        <Tooltip 
+                            contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
+                            itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                            labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
+                            formatter={(value: number, name: string) => [name.includes('Percentage') ? `${formatNumber(value)}%` : formatCurrency(value), name]} 
+                        />
+                        <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+                        <Bar yAxisId="left" dataKey="totalPayment" name="Total Payment" fill="#64748b" radius={[4, 4, 0, 0]} />
+                        <Bar yAxisId="left" dataKey="rdsCost" name="RDS Cost" fill="#f97316" radius={[4, 4, 0, 0]} />
+                        <Line yAxisId="right" type="monotone" dataKey="rdsPercentage" name="RDS Percentage" stroke="#38bdf8" strokeWidth={3} activeDot={{ r: 6 }} />
                     </ComposedChart>
                 </ResponsiveContainer>
             </div>

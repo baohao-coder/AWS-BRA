@@ -266,17 +266,18 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
         </div>
         <div className="h-96">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={monthlyTotalData} margin={{ top: 5, right: 30, left: 50, bottom: 5 }}>
+            <LineChart data={monthlyTotalData} margin={{ top: 20, right: 30, left: 60, bottom: 15 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-              <XAxis dataKey="month" stroke="#a0aec0" />
-              <YAxis stroke="#a0aec0" tickFormatter={(value) => Number(value).toLocaleString()} />
+              <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+              <YAxis stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} tickFormatter={(value) => Number(value).toLocaleString()} />
               <Tooltip
-                contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }}
-                labelStyle={{ color: '#e2e8f0' }}
+                contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                 formatter={(value:number) => [formatNumber(value), 'Total Amount of Payment']}
               />
-              <Legend wrapperStyle={{color: '#a0aec0'}} />
-              <Line type="monotone" dataKey="Total Amount of Payment (USD)" stroke="#4299e1" strokeWidth={2} activeDot={{ r: 8 }} />
+              <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+              <Line type="monotone" dataKey="Total Amount of Payment (USD)" stroke="#38bdf8" strokeWidth={3} activeDot={{ r: 8 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -284,19 +285,20 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
 
       {/* 帳號數量趨勢與變動明細 */}
       <Card title="帳號數量趨勢與變動明細">
-        <div className="h-64 mb-10">
+        <div className="h-72 mb-10">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={monthlyAccountCountData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart data={monthlyAccountCountData} margin={{ top: 20, right: 30, left: 30, bottom: 15 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-              <XAxis dataKey="month" stroke="#a0aec0" />
-              <YAxis stroke="#a0aec0" allowDecimals={false} label={{ value: 'Count', angle: -90, position: 'insideLeft', fill: '#a0aec0' }} />
+              <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+              <YAxis stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11 }} allowDecimals={false} label={{ value: 'Count', angle: -90, position: 'insideLeft', fill: '#f3f4f6' }} />
               <Tooltip
-                contentStyle={{ backgroundColor: '#2d3748', border: 'none', borderRadius: '0.5rem' }}
-                labelStyle={{ color: '#e2e8f0' }}
+                contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
                 formatter={(value: number) => [value, 'Number of Accounts']}
               />
-              <Legend wrapperStyle={{color: '#a0aec0'}} />
-              <Line type="stepAfter" dataKey="Number of Accounts" stroke="#48bb78" strokeWidth={2} activeDot={{ r: 6 }} />
+              <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+              <Line type="stepAfter" dataKey="Number of Accounts" stroke="#4ade80" strokeWidth={3} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
