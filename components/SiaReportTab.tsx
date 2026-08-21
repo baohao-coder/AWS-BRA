@@ -76,6 +76,19 @@ const isGravitonUsage = (productName: string, usageType: string, itemDescription
   return isGravitonInstance;
 };
 
+// Check if a service item is RDS (Amazon Relational Database Service)
+// 4-3: 從 "Product Name" 找尋關鍵字包含 "AmazonRDS"
+const isRdsProduct = (productName: string, usageType: string = '', itemDescription: string = '') => {
+  const pRaw = (productName || '').trim();
+  const pLower = pRaw.toLowerCase().replace(/[\s\-_]+/g, '');
+  
+  return pLower.includes('amazonrds') || 
+         pLower.includes('relationaldatabaseservice') ||
+         pRaw === 'Amazon RDS' ||
+         pRaw === 'AmazonRDS' ||
+         pLower.startsWith('rds');
+};
+
 // --- Helper Components ---
 
 const StatusBadge: React.FC<{ status: 'achieved' | 'in-progress' | 'not-achieved' }> = ({ status }) => {
@@ -208,6 +221,7 @@ const useSiaAnalysis = (data: BillingData) => {
       totalEc2Usage: number;
       gravitonUsage: number;
       genAiCost: number;
+      rdsCost: number;
     }>();
 
     months.forEach(month => {
@@ -222,6 +236,7 @@ const useSiaAnalysis = (data: BillingData) => {
         totalEc2Usage: 0,
         gravitonUsage: 0,
         genAiCost: 0,
+        rdsCost: 0,
       });
     });
 
@@ -257,12 +272,18 @@ const useSiaAnalysis = (data: BillingData) => {
       if (isGenAiProduct(detail.productName, detail.usageType, detail.itemDescription)) {
         monthData.genAiCost += detail.totalCost;
       }
+
+      // 4. Table 4: RDS Credits (Amazon Relational Database Service - AmazonRDS)
+      if (isRdsProduct(detail.productName, detail.usageType, detail.itemDescription)) {
+        monthData.rdsCost += detail.totalCost;
+      }
     });
     
     const monthlyResults = Array.from(analysisByMonth.entries()).map(([month, d]) => ({ 
       month, 
       ...d,
       gravitonPercentage: d.totalEc2Usage > 0 ? (d.gravitonUsage / d.totalEc2Usage) * 100 : 0,
+      rdsPercentage: d.totalPayment > 0 ? (d.rdsCost / d.totalPayment) * 100 : 0,
     }));
 
     // Check consecutive months logic for a specific window
@@ -338,20 +359,37 @@ const useSiaAnalysis = (data: BillingData) => {
 
     const cumulativeTotal = monthlyResults.reduce((sum, item) => sum + item.totalPayment, 0);
     const cumulativeGenAiCost = monthlyResults.reduce((sum, item) => sum + item.genAiCost, 0);
+    const cumulativeRdsCost = monthlyResults.reduce((sum, item) => sum + item.rdsCost, 0);
     const totalGenAiCredit = genAiYear1Credit + genAiYear2Credit;
 
+    // 4. Table 4: RDS Credits Calculations
+    // 4-1: 第一年 (2025-07 ~ 2026-06) 使用量必須達到 $2,000,000 美元 (含) 以上（不含營業稅）
+    // 4-2: 第一年使用量中，資料庫服務 (AmazonRDS) 使用金額佔比須達 10% 以上
+    const year1Months = monthlyResults.filter(m => m.month >= '2025-07' && m.month <= '2026-06');
+    const rdsYear1TotalSpend = year1Months.reduce((sum, m) => sum + m.totalPayment, 0);
+    const rdsYear1RdsSpend = year1Months.reduce((sum, m) => sum + m.rdsCost, 0);
+    const rdsYear1Ratio = rdsYear1TotalSpend > 0 ? (rdsYear1RdsSpend / rdsYear1TotalSpend) * 100 : 0;
+    
+    const rdsCondition1Achieved = rdsYear1TotalSpend >= 2000000;
+    const rdsCondition2Achieved = rdsYear1Ratio >= 10;
+    const rdsFullyAchieved = rdsCondition1Achieved && rdsCondition2Achieved;
+    const rdsCreditEarned = rdsFullyAchieved ? 800000 : 0;
+
     // Total SIA Potential and Achieved Calculation
+    // Total Cap: $450k (OS) + $300k (Graviton) + $150k (GenAI) + $800k (RDS) = $1,700,000
     let earnedCreditsTotal = 0;
     if (computeCheck1.achieved) earnedCreditsTotal += 300000;
     if (computeCheck2.achieved) earnedCreditsTotal += 150000;
     if (gravitonCheck1.achieved) earnedCreditsTotal += 150000;
     if (gravitonCheck2.achieved) earnedCreditsTotal += 150000;
     earnedCreditsTotal += totalGenAiCredit;
+    earnedCreditsTotal += rdsCreditEarned;
 
     return {
       monthly: monthlyResults,
       cumulativeTotal,
       cumulativeGenAiCost,
+      cumulativeRdsCost,
       computeCheck1,
       computeCheck2,
       gravitonCheck1,
@@ -361,6 +399,13 @@ const useSiaAnalysis = (data: BillingData) => {
       genAiYear2Cost,
       genAiYear2Credit,
       totalGenAiCredit,
+      rdsYear1TotalSpend,
+      rdsYear1RdsSpend,
+      rdsYear1Ratio,
+      rdsCondition1Achieved,
+      rdsCondition2Achieved,
+      rdsFullyAchieved,
+      rdsCreditEarned,
       earnedCreditsTotal,
     };
   }, [allDetails, months, sortedData]);
@@ -380,6 +425,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
   const computeDetails = getFilteredDetails(d => isLinuxOrRhelEc2(d.productName, d.usageType, d.itemDescription));
   const gravitonDetails = getFilteredDetails(d => isGravitonUsage(d.productName, d.usageType, d.itemDescription));
   const genAiDetails = getFilteredDetails(d => isGenAiProduct(d.productName, d.usageType, d.itemDescription));
+  const rdsDetails = getFilteredDetails(d => isRdsProduct(d.productName, d.usageType, d.itemDescription));
 
   const handleExport = (details: ServiceDetail[], filename: string) => {
     const dataToExport = details.map(item => ({
@@ -405,8 +451,8 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <span className="text-xs font-semibold text-indigo-300 uppercase tracking-wider block mb-1">
               SIA 總回饋金額上限
             </span>
-            <p className="text-3xl font-extrabold text-white font-mono">$900,000</p>
-            <p className="text-xs text-indigo-200/80 mt-1.5">包含三大核心轉型投資方案總額</p>
+            <p className="text-3xl font-extrabold text-white font-mono">$1,700,000</p>
+            <p className="text-xs text-indigo-200/80 mt-1.5">包含四大核心轉型與 RDS 投資方案總額</p>
           </div>
 
           <div className="p-4 bg-gradient-to-br from-emerald-900/60 to-gray-800 rounded-xl border border-emerald-500/30">
@@ -417,7 +463,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
               {formatCurrency(analysis.earnedCreditsTotal)}
             </p>
             <p className="text-xs text-emerald-200/80 mt-1.5">
-              達成率: {formatNumber((analysis.earnedCreditsTotal / 900000) * 100, 1)}%
+              達成率: {formatNumber((analysis.earnedCreditsTotal / 1700000) * 100, 1)}%
             </p>
           </div>
 
@@ -597,6 +643,31 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   <span className="text-emerald-400 font-mono font-bold">
                     {formatCurrency(analysis.genAiYear2Credit)}
                   </span>
+                </td>
+              </tr>
+
+              {/* Table 4: RDS Credits */}
+              <tr className="hover:bg-gray-800/50 transition bg-amber-950/20">
+                <td className="px-3.5 py-3 font-bold text-amber-400 whitespace-nowrap">
+                  Table 4: RDS Credits<br/>
+                  <span className="text-[11px] text-gray-400 font-normal">資料庫服務一次性 Credit</span>
+                </td>
+                <td className="px-3.5 py-3 text-gray-300 max-w-xs leading-relaxed">
+                  Upon satisfying both conditions in Year 1, apply to AWS for an $800,000 one-time credit. After AWS internal approval, credit will be issued the following month to offset future usage.
+                </td>
+                <td className="px-3.5 py-3 text-gray-200 space-y-0.5">
+                  <div>4-1. 第 1 年使用量達 <span className="font-bold text-amber-300">$2,000,000 USD</span> (含) 以上</div>
+                  <div>4-2. Amazon RDS 使用金額佔比須達 <span className="font-bold text-amber-300">10%</span> 以上</div>
+                  <div className="text-[11px] text-gray-400">4-3. 依 Product Name 包含 "AmazonRDS" 之金額計算</div>
+                </td>
+                <td className="px-3.5 py-3 text-center font-mono whitespace-nowrap text-gray-300">
+                  2025/07/01 - 2026/06/30
+                </td>
+                <td className="px-3.5 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                  $800,000
+                </td>
+                <td className="px-3.5 py-3 text-center whitespace-nowrap">
+                  <StatusBadge status={analysis.rdsFullyAchieved ? 'achieved' : (analysis.rdsCondition1Achieved || analysis.rdsCondition2Achieved) ? 'in-progress' : 'not-achieved'} />
                 </td>
               </tr>
             </tbody>
@@ -962,6 +1033,165 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
           title="符合條件的 Generative AI (Bedrock / Amazon Q) 服務明細" 
           data={genAiDetails} 
           onExport={() => handleExport(genAiDetails, 'sia_gen_ai_details')} 
+        />
+      </Card>
+
+      {/* 4. Table 4 : RDS Credits ( 資料庫服務 ) */}
+      <Card title="4、RDS Credits ( Amazon Relational Database Service )">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
+          <div className="text-xs text-gray-300">
+            一次性回饋金額: <span className="font-bold text-emerald-400 text-sm font-mono">$800,000 USD (捌拾萬美元)</span>
+            <span className="text-gray-400 ml-2">（通過 AWS 內部審查後，於審核次月核發 Credit 扣抵後續用量）</span>
+          </div>
+          <span className="text-xs text-amber-300 bg-amber-950/60 border border-amber-500/40 px-3 py-1 rounded-full">
+            條件：第一年總使用量達 $2,000,000 且 Amazon RDS 佔比達 10% 以上
+          </span>
+        </div>
+
+        {/* 雙條件達成檢核卡片 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Condition 4-1 */}
+          <div className="p-4 bg-gray-800/80 border border-gray-700/80 rounded-xl space-y-2.5">
+            <div className="flex justify-between items-start">
+              <div>
+                <span className="text-xs font-bold text-amber-300 uppercase tracking-wider block">
+                  條件 4-1：第一年總使用量門檻
+                </span>
+                <p className="text-sm font-semibold text-white mt-1">
+                  第 1 年使用量達 <span className="text-amber-300 font-mono font-bold">$2,000,000 USD</span> (含) 以上
+                </p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  不含營業稅，驗證期：2025/07/01 - 2026/06/30 (如超過簽約日起至第1年止則無法符合)
+                </p>
+              </div>
+              <StatusBadge status={analysis.rdsCondition1Achieved ? 'achieved' : analysis.rdsYear1TotalSpend > 0 ? 'in-progress' : 'not-achieved'} />
+            </div>
+
+            <div className="pt-2 bg-gray-900/60 p-3 rounded-lg space-y-1.5 font-mono text-xs">
+              <div className="flex justify-between text-gray-400">
+                <span>第 1 年累計總花費:</span>
+                <span className="text-white font-bold">{formatCurrency(analysis.rdsYear1TotalSpend)}</span>
+              </div>
+              <div className="flex justify-between text-gray-400">
+                <span>目標門檻金額:</span>
+                <span className="text-amber-400 font-bold">$2,000,000.00</span>
+              </div>
+              <div className="flex justify-between text-gray-300 border-t border-gray-700/60 pt-1 font-sans">
+                <span>達成率:</span>
+                <span className="font-mono font-bold text-white">
+                  {formatNumber((analysis.rdsYear1TotalSpend / 2000000) * 100, 1)}%
+                </span>
+              </div>
+            </div>
+
+            <div className="w-full bg-gray-700 rounded-full h-2 mt-1">
+              <div 
+                className={`h-2 rounded-full transition-all duration-500 ${analysis.rdsCondition1Achieved ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                style={{ width: `${Math.min(100, (analysis.rdsYear1TotalSpend / 2000000) * 100)}%` }}
+              ></div>
+            </div>
+          </div>
+
+          {/* Condition 4-2 */}
+          <div className="p-4 bg-gray-800/80 border border-gray-700/80 rounded-xl space-y-2.5">
+            <div className="flex justify-between items-start">
+              <div>
+                <span className="text-xs font-bold text-amber-300 uppercase tracking-wider block">
+                  條件 4-2：Amazon RDS 資料庫使用佔比
+                </span>
+                <p className="text-sm font-semibold text-white mt-1">
+                  第 1 年 Amazon RDS 使用金額佔比達 <span className="text-amber-300 font-mono font-bold">10%</span> 以上
+                </p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  依 Product Name 包含 "AmazonRDS" 服務金額 (E10 Product Cost) 計算
+                </p>
+              </div>
+              <StatusBadge status={analysis.rdsCondition2Achieved ? 'achieved' : analysis.rdsYear1RdsSpend > 0 ? 'in-progress' : 'not-achieved'} />
+            </div>
+
+            <div className="pt-2 bg-gray-900/60 p-3 rounded-lg space-y-1.5 font-mono text-xs">
+              <div className="flex justify-between text-gray-400">
+                <span>第 1 年累計 RDS 費用:</span>
+                <span className="text-white font-bold">{formatCurrency(analysis.rdsYear1RdsSpend)}</span>
+              </div>
+              <div className="flex justify-between text-gray-400">
+                <span>第 1 年 RDS 實際佔比:</span>
+                <span className={`font-bold ${analysis.rdsCondition2Achieved ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {formatNumber(analysis.rdsYear1Ratio, 2)}%
+                </span>
+              </div>
+              <div className="flex justify-between text-gray-300 border-t border-gray-700/60 pt-1 font-sans">
+                <span>門檻要求:</span>
+                <span className="font-mono font-bold text-white">≥ 10.00%</span>
+              </div>
+            </div>
+
+            <div className="w-full bg-gray-700 rounded-full h-2 mt-1">
+              <div 
+                className={`h-2 rounded-full transition-all duration-500 ${analysis.rdsCondition2Achieved ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                style={{ width: `${Math.min(100, (analysis.rdsYear1Ratio / 10) * 100)}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        {/* 4-4: 月度總金額、當月 RDS 金額以及 RDS 佔比圖表 */}
+        <div className="mt-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2">
+            <h4 className="text-sm font-semibold text-white">
+              月度總金額 (Total Amount)、當月 RDS 金額 (RDS Cost) 與 RDS 佔比 (%)
+            </h4>
+            <div className="flex items-center gap-3 text-xs text-gray-400">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 bg-indigo-500 inline-block rounded-sm"></span> 當月總金額</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 bg-amber-500 inline-block rounded-sm"></span> 當月 RDS 金額</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-emerald-400 inline-block"></span> RDS 佔比 (%)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-rose-400 inline-block"></span> 10% 門檻</span>
+            </div>
+          </div>
+
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={analysis.monthly} margin={{ top: 20, right: 35, left: 60, bottom: 15 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="month" stroke="#9ca3af" tick={{ fill: '#f3f4f6', fontSize: 11, fontWeight: 'bold' }} />
+                <YAxis 
+                  yAxisId="left" 
+                  stroke="#9ca3af" 
+                  tick={{ fill: '#f3f4f6', fontSize: 11 }} 
+                  tickFormatter={(value) => formatCurrency(Number(value))} 
+                />
+                <YAxis 
+                  yAxisId="right" 
+                  orientation="right" 
+                  stroke="#4ade80" 
+                  tick={{ fill: '#f3f4f6', fontSize: 11 }} 
+                  label={{ value: 'RDS 佔比 (%)', angle: 90, position: 'insideRight', fill: '#4ade80' }} 
+                  tickFormatter={(value) => `${formatNumber(Number(value), 1)}%`}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
+                  itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                  labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
+                  formatter={(value: number, name: string) => [
+                    name.includes('佔比') ? `${formatNumber(value, 2)}%` : formatCurrency(value), 
+                    name
+                  ]} 
+                />
+                <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
+                <ReferenceLine yAxisId="right" y={10} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: '10% 門檻', fill: '#f43f5e', fontSize: 11, position: 'insideTopRight' }} />
+                <Bar yAxisId="left" dataKey="totalPayment" name="當月總金額 (Total Amount)" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="left" dataKey="rdsCost" name="當月 RDS 金額 (RDS Cost)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="rdsPercentage" name="RDS 佔比 (%)" stroke="#4ade80" strokeWidth={3} activeDot={{ r: 6 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* 符合條件明細表 */}
+        <DetailsSection 
+          title="符合條件的 Amazon RDS (Relational Database Service) 服務明細" 
+          data={rdsDetails} 
+          onExport={() => handleExport(rdsDetails, 'sia_rds_details')} 
         />
       </Card>
     </div>
