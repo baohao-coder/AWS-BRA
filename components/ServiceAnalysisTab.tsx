@@ -1,7 +1,8 @@
 
 import React, { useMemo, useState } from 'react';
-import { BillingData, ServiceDetail } from '../types';
+import { BillingData, ServiceDetail, AccountData, Service } from '../types';
 import { exportToExcel } from '../services/excelUtils';
+import { isSkillBuilderItem } from '../services/edpCalculator';
 import { 
   getServiceCategory, 
   CATEGORY_METAS, 
@@ -153,8 +154,86 @@ type ProductSortKey = 'name' | 'totalCost';
 type SortDirection = 'asc' | 'desc';
 type AnalysisMode = 'monthly' | 'cumulative';
 
+const EXCLUDED_ACCOUNT_ID = '927845210633';
+
 const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
-  const sortedData = useMemo(() => [...data].sort((a, b) => a.month.localeCompare(b.month)), [data]);
+  // Sanitize raw billing data:
+  // 1. Exclude all expenses from AWS ID: 927845210633
+  // 2. Exclude OCBAWSskillbuilder expenses
+  const { sanitizedData, excludedAccountCostTotal, excludedSkillbuilderCostTotal } = useMemo(() => {
+    let excludedAccountCost = 0;
+    let excludedSkillbuilderCost = 0;
+
+    const sanitized: BillingData = data.map(monthData => {
+      const validAccounts: AccountData[] = [];
+
+      monthData.accounts.forEach(acc => {
+        // 1. 扣除 AWS ID: 927845210633 的所有費用
+        if (acc.accountId === EXCLUDED_ACCOUNT_ID) {
+          const accCost = typeof acc.totalAmount === 'number'
+            ? acc.totalAmount
+            : (acc.services?.reduce((sum, s) => sum + (s.totalCost || 0), 0) || 0);
+          excludedAccountCost += accCost;
+          return;
+        }
+
+        // 2. 扣除 OCBAWSskillbuilder 費用
+        const validServices: Service[] = [];
+        acc.services?.forEach(srv => {
+          if (isSkillBuilderItem(srv.productName)) {
+            excludedSkillbuilderCost += srv.totalCost || 0;
+            return;
+          }
+
+          if (srv.details && srv.details.length > 0) {
+            const validDetails: ServiceDetail[] = [];
+            let serviceCost = 0;
+
+            srv.details.forEach(det => {
+              if (isSkillBuilderItem(det.productName || srv.productName, det.usageType, det.itemDescription)) {
+                excludedSkillbuilderCost += det.totalCost || 0;
+              } else {
+                validDetails.push(det);
+                serviceCost += det.totalCost || 0;
+              }
+            });
+
+            if (validDetails.length > 0 || serviceCost > 0) {
+              validServices.push({
+                ...srv,
+                totalCost: serviceCost,
+                details: validDetails
+              });
+            }
+          } else {
+            validServices.push(srv);
+          }
+        });
+
+        const accountTotal = validServices.reduce((sum, s) => sum + (s.totalCost || 0), 0);
+        validAccounts.push({
+          ...acc,
+          totalAmount: accountTotal,
+          services: validServices
+        });
+      });
+
+      const monthTotal = validAccounts.reduce((sum, a) => sum + (a.totalAmount || 0), 0);
+      return {
+        ...monthData,
+        accounts: validAccounts,
+        totalAmount: monthTotal
+      };
+    });
+
+    return {
+      sanitizedData: sanitized,
+      excludedAccountCostTotal: excludedAccountCost,
+      excludedSkillbuilderCostTotal: excludedSkillbuilderCost
+    };
+  }, [data]);
+
+  const sortedData = useMemo(() => [...sanitizedData].sort((a, b) => a.month.localeCompare(b.month)), [sanitizedData]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
   
   // Extract all unique accounts across the dataset with total cost
@@ -1185,6 +1264,27 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
             )}
           </div>
         )}
+
+        {/* 扣除規則說明標籤 (自動排除 AWS ID: 927845210633 及 OCBAWSskillbuilder) */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 bg-slate-900/80 border border-indigo-500/30 rounded-lg text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-indigo-300 flex items-center gap-1">
+              <span>🛡️</span>
+              <span>已自動套用費用扣除原則：</span>
+            </span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-600/40 text-[11px] font-mono">
+              <span>① 排除 AWS ID: 927845210633</span>
+              {excludedAccountCostTotal > 0 && <span>(-${formatNumber(excludedAccountCostTotal)})</span>}
+            </span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-600/40 text-[11px] font-mono">
+              <span>② 扣除 OCBAWSskillbuilder 費用</span>
+              {excludedSkillbuilderCostTotal > 0 && <span>(-${formatNumber(excludedSkillbuilderCostTotal)})</span>}
+            </span>
+          </div>
+          <span className="text-[11px] text-gray-400">
+            公雲使用分佈 (R/G/T)、八大服務分類及產品明細均已扣除上述費用
+          </span>
+        </div>
 
         {/* 警告提示：自選模式但 0 個帳號選取 */}
         {isCustomAccountMode && selectedAccountIds.length === 0 && (
