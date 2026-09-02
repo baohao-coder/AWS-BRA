@@ -1,5 +1,11 @@
-import React, { useState } from 'react';
-import { EdpForecastSettings, EdpProjectedItem, EdpMonthlyOverride, DEFAULT_FORECAST_SETTINGS } from '../../services/edpCalculator';
+import React, { useState, useMemo } from 'react';
+import { 
+  EdpForecastSettings, 
+  EdpProjectedItem, 
+  EdpMonthlyOverride, 
+  DEFAULT_FORECAST_SETTINGS,
+  EdpMonthResult 
+} from '../../services/edpCalculator';
 
 interface EdpForecastManagerProps {
   settings: EdpForecastSettings;
@@ -7,6 +13,14 @@ interface EdpForecastManagerProps {
   lastActualMonth: string;
   futureMonthsList: string[];
   discountRate: number;
+  actualMonths?: EdpMonthResult[];
+}
+
+interface HistoricalGrowthRates {
+  allTime: { rate: number; monthlyAmount: number; monthsCount: number; isValid: boolean; firstMonth: string; lastMonth: string };
+  last12Mo: { rate: number; monthlyAmount: number; monthsCount: number; isValid: boolean; firstMonth: string; lastMonth: string };
+  last6Mo: { rate: number; monthlyAmount: number; monthsCount: number; isValid: boolean; firstMonth: string; lastMonth: string };
+  last3Mo: { rate: number; monthlyAmount: number; monthsCount: number; isValid: boolean; firstMonth: string; lastMonth: string };
 }
 
 const formatCurrency = (val: number): string => {
@@ -20,6 +34,7 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
   lastActualMonth,
   futureMonthsList,
   discountRate,
+  actualMonths = [],
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'model' | 'projects' | 'monthlyGrid'>('projects');
   
@@ -33,6 +48,47 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
   const [newProjectAmount, setNewProjectAmount] = useState<number>(30000);
   const [newProjectIsDiscounted, setNewProjectIsDiscounted] = useState<boolean>(true);
   const [newProjectNotes, setNewProjectNotes] = useState<string>('');
+
+  // Calculate historical compound monthly growth rate (CMGR) & linear monthly amount
+  const historicalGrowthRates = useMemo<HistoricalGrowthRates>(() => {
+    const calcRateForPeriod = (months: EdpMonthResult[]) => {
+      if (months.length < 2) {
+        return { rate: 0, monthlyAmount: 0, monthsCount: months.length, isValid: false, firstMonth: '', lastMonth: '' };
+      }
+      const first = months[0];
+      const last = months[months.length - 1];
+      const firstCost = first.totalEdpAdjustedCost;
+      const lastCost = last.totalEdpAdjustedCost;
+      const periods = months.length - 1;
+
+      let rate = 0;
+      let monthlyAmount = 0;
+
+      if (firstCost > 0 && lastCost > 0 && periods > 0) {
+        // Compound Monthly Growth Rate (CMGR) in percentage
+        rate = (Math.pow(lastCost / firstCost, 1 / periods) - 1) * 100;
+        // Linear Monthly Average Increase in USD
+        monthlyAmount = (lastCost - firstCost) / periods;
+      }
+
+      return {
+        rate: Number.isFinite(rate) ? rate : 0,
+        monthlyAmount: Number.isFinite(monthlyAmount) ? monthlyAmount : 0,
+        monthsCount: months.length,
+        isValid: true,
+        firstMonth: first.month,
+        lastMonth: last.month,
+      };
+    };
+
+    const count = actualMonths.length;
+    const allTime = calcRateForPeriod(actualMonths);
+    const last12Mo = calcRateForPeriod(actualMonths.slice(Math.max(0, count - 12)));
+    const last6Mo = calcRateForPeriod(actualMonths.slice(Math.max(0, count - 6)));
+    const last3Mo = calcRateForPeriod(actualMonths.slice(Math.max(0, count - 3)));
+
+    return { allTime, last12Mo, last6Mo, last3Mo };
+  }, [actualMonths]);
 
   const handleToggleForecast = () => {
     onChange({
@@ -505,7 +561,7 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
               </div>
 
               {/* 成長算法 */}
-              <div className="space-y-2">
+              <div className="space-y-2 lg:col-span-1">
                 <label className="block text-gray-300 font-bold">
                   3. 基礎成長模式 (Growth Formula)
                 </label>
@@ -526,7 +582,7 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
-                        step="0.1"
+                        step="0.01"
                         value={settings.monthlyGrowthRate}
                         onChange={(e) => handleUpdateBaseModel({ monthlyGrowthRate: Number(e.target.value) })}
                         className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-white font-mono"
@@ -548,6 +604,261 @@ export const EdpForecastManager: React.FC<EdpForecastManagerProps> = ({
                     />
                   </div>
                 )}
+              </div>
+
+              {/* 匯入歷史數據計算之成長率推薦與快速套用面板 (全期 / 近12月 / 近6月 / 近3月) */}
+              <div className="col-span-1 lg:col-span-3 mt-2 pt-3 border-t border-gray-700/80 bg-gray-950/60 p-3.5 rounded-xl border border-gray-800">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] font-bold rounded">
+                      📊 匯入數據實際演算
+                    </span>
+                    <span className="text-gray-200 font-bold text-xs">
+                      歷史實際複合月成長率 (CMGR) 與月增量參考
+                    </span>
+                  </div>
+                  <span className="text-gray-400 text-[11px]">
+                    點擊按鈕可直接將計算結果代入上方成長模式
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  {/* 1. 全期成長率 */}
+                  <div className="bg-gray-900 p-3 rounded-lg border border-gray-700/80 flex flex-col justify-between hover:border-indigo-500/50 transition">
+                    <div>
+                      <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                        <span className="font-semibold text-gray-300">🌐 全期實際成長</span>
+                        <span className="font-mono text-[10px] text-gray-400">
+                          {historicalGrowthRates.allTime.monthsCount} 個月
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                        {historicalGrowthRates.allTime.firstMonth || '-'} ~ {historicalGrowthRates.allTime.lastMonth || '-'}
+                      </div>
+                      <div className="my-2 space-y-0.5">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-gray-400 text-[11px]">複合月成長率:</span>
+                          <span className={`font-mono font-bold text-sm ${
+                            historicalGrowthRates.allTime.rate >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {historicalGrowthRates.allTime.rate >= 0 ? '+' : ''}
+                            {historicalGrowthRates.allTime.rate.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between text-[11px] text-gray-400">
+                          <span>月均線性增量:</span>
+                          <span className="font-mono text-gray-200">
+                            {historicalGrowthRates.allTime.monthlyAmount >= 0 ? '+' : ''}
+                            {formatCurrency(historicalGrowthRates.allTime.monthlyAmount)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-gray-800/80 flex gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_RATE',
+                          monthlyGrowthRate: Number(historicalGrowthRates.allTime.rate.toFixed(2)) 
+                        })}
+                        disabled={!historicalGrowthRates.allTime.isValid}
+                        className="flex-1 px-2 py-1 bg-indigo-900/60 hover:bg-indigo-700 text-indigo-200 hover:text-white rounded text-[10px] font-semibold border border-indigo-700/50 transition disabled:opacity-40"
+                        title="套用全期複利成長率"
+                      >
+                        套用複利 %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_AMOUNT',
+                          monthlyGrowthAmount: Math.round(historicalGrowthRates.allTime.monthlyAmount) 
+                        })}
+                        disabled={!historicalGrowthRates.allTime.isValid}
+                        className="flex-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-[10px] font-semibold border border-gray-600 transition disabled:opacity-40"
+                        title="套用全期月增量 USD"
+                      >
+                        套用增量 $
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. 近 12 個月成長率 */}
+                  <div className="bg-gray-900 p-3 rounded-lg border border-gray-700/80 flex flex-col justify-between hover:border-indigo-500/50 transition">
+                    <div>
+                      <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                        <span className="font-semibold text-gray-300">📅 近 12 個月</span>
+                        <span className="font-mono text-[10px] text-gray-400">
+                          {historicalGrowthRates.last12Mo.monthsCount} 個月
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                        {historicalGrowthRates.last12Mo.firstMonth || '-'} ~ {historicalGrowthRates.last12Mo.lastMonth || '-'}
+                      </div>
+                      <div className="my-2 space-y-0.5">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-gray-400 text-[11px]">複合月成長率:</span>
+                          <span className={`font-mono font-bold text-sm ${
+                            historicalGrowthRates.last12Mo.rate >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {historicalGrowthRates.last12Mo.rate >= 0 ? '+' : ''}
+                            {historicalGrowthRates.last12Mo.rate.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between text-[11px] text-gray-400">
+                          <span>月均線性增量:</span>
+                          <span className="font-mono text-gray-200">
+                            {historicalGrowthRates.last12Mo.monthlyAmount >= 0 ? '+' : ''}
+                            {formatCurrency(historicalGrowthRates.last12Mo.monthlyAmount)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-gray-800/80 flex gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_RATE',
+                          monthlyGrowthRate: Number(historicalGrowthRates.last12Mo.rate.toFixed(2)) 
+                        })}
+                        disabled={!historicalGrowthRates.last12Mo.isValid}
+                        className="flex-1 px-2 py-1 bg-indigo-900/60 hover:bg-indigo-700 text-indigo-200 hover:text-white rounded text-[10px] font-semibold border border-indigo-700/50 transition disabled:opacity-40"
+                        title="套用近 12 個月複利成長率"
+                      >
+                        套用複利 %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_AMOUNT',
+                          monthlyGrowthAmount: Math.round(historicalGrowthRates.last12Mo.monthlyAmount) 
+                        })}
+                        disabled={!historicalGrowthRates.last12Mo.isValid}
+                        className="flex-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-[10px] font-semibold border border-gray-600 transition disabled:opacity-40"
+                        title="套用近 12 個月月增量 USD"
+                      >
+                        套用增量 $
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3. 近 6 個月成長率 */}
+                  <div className="bg-gray-900 p-3 rounded-lg border border-gray-700/80 flex flex-col justify-between hover:border-indigo-500/50 transition">
+                    <div>
+                      <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                        <span className="font-semibold text-gray-300">⚡ 近 6 個月 (中期)</span>
+                        <span className="font-mono text-[10px] text-gray-400">
+                          {historicalGrowthRates.last6Mo.monthsCount} 個月
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                        {historicalGrowthRates.last6Mo.firstMonth || '-'} ~ {historicalGrowthRates.last6Mo.lastMonth || '-'}
+                      </div>
+                      <div className="my-2 space-y-0.5">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-gray-400 text-[11px]">複合月成長率:</span>
+                          <span className={`font-mono font-bold text-sm ${
+                            historicalGrowthRates.last6Mo.rate >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {historicalGrowthRates.last6Mo.rate >= 0 ? '+' : ''}
+                            {historicalGrowthRates.last6Mo.rate.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between text-[11px] text-gray-400">
+                          <span>月均線性增量:</span>
+                          <span className="font-mono text-gray-200">
+                            {historicalGrowthRates.last6Mo.monthlyAmount >= 0 ? '+' : ''}
+                            {formatCurrency(historicalGrowthRates.last6Mo.monthlyAmount)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-gray-800/80 flex gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_RATE',
+                          monthlyGrowthRate: Number(historicalGrowthRates.last6Mo.rate.toFixed(2)) 
+                        })}
+                        disabled={!historicalGrowthRates.last6Mo.isValid}
+                        className="flex-1 px-2 py-1 bg-indigo-900/60 hover:bg-indigo-700 text-indigo-200 hover:text-white rounded text-[10px] font-semibold border border-indigo-700/50 transition disabled:opacity-40"
+                        title="套用近 6 個月複利成長率"
+                      >
+                        套用複利 %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_AMOUNT',
+                          monthlyGrowthAmount: Math.round(historicalGrowthRates.last6Mo.monthlyAmount) 
+                        })}
+                        disabled={!historicalGrowthRates.last6Mo.isValid}
+                        className="flex-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-[10px] font-semibold border border-gray-600 transition disabled:opacity-40"
+                        title="套用近 6 個月月增量 USD"
+                      >
+                        套用增量 $
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4. 近 3 個月成長率 */}
+                  <div className="bg-gray-900 p-3 rounded-lg border border-gray-700/80 flex flex-col justify-between hover:border-indigo-500/50 transition">
+                    <div>
+                      <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                        <span className="font-semibold text-gray-300">🔥 近 3 個月 (最新趨勢)</span>
+                        <span className="font-mono text-[10px] text-gray-400">
+                          {historicalGrowthRates.last3Mo.monthsCount} 個月
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                        {historicalGrowthRates.last3Mo.firstMonth || '-'} ~ {historicalGrowthRates.last3Mo.lastMonth || '-'}
+                      </div>
+                      <div className="my-2 space-y-0.5">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-gray-400 text-[11px]">複合月成長率:</span>
+                          <span className={`font-mono font-bold text-sm ${
+                            historicalGrowthRates.last3Mo.rate >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {historicalGrowthRates.last3Mo.rate >= 0 ? '+' : ''}
+                            {historicalGrowthRates.last3Mo.rate.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between text-[11px] text-gray-400">
+                          <span>月均線性增量:</span>
+                          <span className="font-mono text-gray-200">
+                            {historicalGrowthRates.last3Mo.monthlyAmount >= 0 ? '+' : ''}
+                            {formatCurrency(historicalGrowthRates.last3Mo.monthlyAmount)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-gray-800/80 flex gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_RATE',
+                          monthlyGrowthRate: Number(historicalGrowthRates.last3Mo.rate.toFixed(2)) 
+                        })}
+                        disabled={!historicalGrowthRates.last3Mo.isValid}
+                        className="flex-1 px-2 py-1 bg-indigo-900/60 hover:bg-indigo-700 text-indigo-200 hover:text-white rounded text-[10px] font-semibold border border-indigo-700/50 transition disabled:opacity-40"
+                        title="套用近 3 個月複利成長率"
+                      >
+                        套用複利 %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateBaseModel({ 
+                          baseGrowthModel: 'FIXED_AMOUNT',
+                          monthlyGrowthAmount: Math.round(historicalGrowthRates.last3Mo.monthlyAmount) 
+                        })}
+                        disabled={!historicalGrowthRates.last3Mo.isValid}
+                        className="flex-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-[10px] font-semibold border border-gray-600 transition disabled:opacity-40"
+                        title="套用近 3 個月月增量 USD"
+                      >
+                        套用增量 $
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

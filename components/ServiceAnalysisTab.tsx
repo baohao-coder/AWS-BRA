@@ -15,10 +15,14 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, 
   PieChart, Pie, Legend 
 } from 'recharts';
+import ForecastAnalysisSection from './service-analysis/ForecastAnalysisSection';
+import RegionAzAnalysisSection from './service-analysis/RegionAzAnalysisSection';
 
 interface ServiceAnalysisTabProps {
   data: BillingData;
 }
+
+export type ServiceAnalysisSubTab = 'forecast' | 'structure' | 'region_az';
 
 interface ProductAccountSummary {
   accountId: string;
@@ -254,6 +258,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
     return Array.from(accMap.values()).sort((a, b) => b.totalCost - a.totalCost);
   }, [sortedData]);
 
+  const [activeSubTab, setActiveSubTab] = useState<ServiceAnalysisSubTab>('forecast');
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<string>(months[months.length - 1] || '');
   const [expandedProductName, setExpandedProductName] = useState<string | null>(null);
@@ -956,353 +961,455 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   };
 
   return (
-    <div className="space-y-8">
-      {/* 頂部維度選擇與篩選看板 */}
+    <div className="space-y-6">
+      {/* ========================================================================= */}
+      {/* 頂部維度與功能導航面板 (Top Dimension & Function Selection Panel) */}
+      {/* ========================================================================= */}
       <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-md space-y-4">
-        {/* 第一行：時間維度與月份選擇 */}
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-4 border-b border-gray-700/80">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-bold text-gray-300 whitespace-nowrap">時間維度:</span>
-            <div className="inline-flex rounded-lg shadow-sm" role="group">
-              <button
-                type="button"
-                onClick={() => {
-                  setAnalysisMode('monthly');
-                  setExpandedProductName(null);
-                  setExpandedRgtKey(null);
-                }}
-                className={`px-4 py-2 text-sm font-medium border border-gray-600 rounded-l-lg transition-all ${
-                  analysisMode === 'monthly' 
-                    ? 'bg-blue-600 text-white border-blue-600 shadow' 
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-                }`}
-              >
-                單月分析 (Monthly)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAnalysisMode('cumulative');
-                  setExpandedProductName(null);
-                  setExpandedRgtKey(null);
-                }}
-                className={`px-4 py-2 text-sm font-medium border border-gray-600 rounded-r-lg transition-all ${
-                  analysisMode === 'cumulative' 
-                    ? 'bg-blue-600 text-white border-blue-600 shadow' 
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-                }`}
-              >
-                全期間累計 (All-Time)
-              </button>
-            </div>
+        {/* 第一步：選擇帳號維度 (Step 1: Account Dimension) */}
+        <div className="space-y-3 pb-4 border-b border-gray-700">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-400 bg-blue-950/60 px-2.5 py-1 rounded border border-blue-800/50">
+                步驟 1. 選擇帳號維度
+              </span>
 
-            {analysisMode === 'monthly' && (
-              <div className="flex items-center space-x-2 pl-2">
-                <label className="text-sm font-medium text-gray-300 whitespace-nowrap">選擇月份:</label>
+              {/* 快速下拉：全部帳號 或 單一帳號切換 */}
+              <div className="flex items-center space-x-2">
                 <select
-                  value={selectedMonth}
+                  value={!isCustomAccountMode ? '__ALL__' : (selectedAccountIds.length === 1 ? selectedAccountIds[0] : '__MULTI__')}
                   onChange={(e) => {
-                    setSelectedMonth(e.target.value);
-                    setExpandedProductName(null);
-                    setExpandedRgtKey(null);
+                    if (e.target.value === '__MULTI__') {
+                      setShowAccountSelector(true);
+                    } else {
+                      handleSelectSingleAccountFromDropdown(e.target.value);
+                    }
                   }}
-                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer"
+                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer max-w-xs truncate"
                 >
-                  {months.map(m => <option key={m} value={m}>{m}</option>)}
+                  <option value="__ALL__">🌐 全部帳號 (預設，共 {allAccounts.length} 個)</option>
+                  {isCustomAccountMode && selectedAccountIds.length > 1 && (
+                    <option value="__MULTI__">📑 已自選 {selectedAccountIds.length} 個帳號</option>
+                  )}
+                  <optgroup label={analysisMode === 'monthly' ? `單一帳號切換 (${selectedMonth} 當月費用)` : '單一帳號切換 (全期間累計費用)'}>
+                    {currentModeAccounts.map(acc => (
+                      <option key={acc.accountId} value={acc.accountId}>
+                        {acc.accountName || acc.accountId} ({acc.accountId}) - ${formatNumber(acc.currentCost, 2)}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
               </div>
-            )}
-          </div>
 
-          {/* 帳號篩選統計狀態 badge */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">目前帳號範圍:</span>
-            <span className={`text-xs px-2.5 py-1 rounded-full font-medium border ${
-              !isCustomAccountMode 
-                ? 'bg-blue-900/40 text-blue-300 border-blue-700/50' 
-                : selectedAccountIds.length === 0
-                ? 'bg-red-900/40 text-red-300 border-red-700/50'
-                : 'bg-purple-900/40 text-purple-300 border-purple-700/50'
-            }`}>
-              {accountFilterSummaryText}
-            </span>
-          </div>
-        </div>
-
-        {/* 第二行：帳號維度控制列 */}
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            <span className="text-sm font-bold text-gray-300 whitespace-nowrap">帳號維度:</span>
-            
-            {/* 快速下拉：全部帳號 或 單一帳號切換 */}
-            <div className="flex items-center space-x-2">
-              <select
-                value={!isCustomAccountMode ? '__ALL__' : (selectedAccountIds.length === 1 ? selectedAccountIds[0] : '__MULTI__')}
-                onChange={(e) => {
-                  if (e.target.value === '__MULTI__') {
-                    setShowAccountSelector(true);
-                  } else {
-                    handleSelectSingleAccountFromDropdown(e.target.value);
-                  }
-                }}
-                className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer max-w-xs truncate"
-              >
-                <option value="__ALL__">🌐 全部帳號 (預設，共 {allAccounts.length} 個)</option>
-                {isCustomAccountMode && selectedAccountIds.length > 1 && (
-                  <option value="__MULTI__">📑 已自選 {selectedAccountIds.length} 個帳號</option>
-                )}
-                <optgroup label={analysisMode === 'monthly' ? `單一帳號切換 (${selectedMonth} 當月費用)` : '單一帳號切換 (全期間累計費用)'}>
-                  {currentModeAccounts.map(acc => (
-                    <option key={acc.accountId} value={acc.accountId}>
-                      {acc.accountName || acc.accountId} ({acc.accountId}) - ${formatNumber(acc.currentCost, 2)}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
-            </div>
-
-            {/* 快捷切換「全部帳號」按鈕 */}
-            <button
-              type="button"
-              onClick={handleSelectAllAccounts}
-              className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
-                !isCustomAccountMode 
-                  ? 'bg-blue-600 text-white border-blue-500 shadow' 
-                  : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white'
-              }`}
-            >
-              全部帳號
-            </button>
-
-            {/* 自選多個帳號彈窗/面板開關按鈕 */}
-            <button
-              type="button"
-              onClick={() => setShowAccountSelector(prev => !prev)}
-              className={`px-3.5 py-2 text-xs font-medium rounded-lg border transition-all flex items-center gap-1.5 ${
-                showAccountSelector || (isCustomAccountMode && selectedAccountIds.length > 1)
-                  ? 'bg-purple-600 text-white border-purple-500 shadow'
-                  : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white'
-              }`}
-            >
-              <span>自選多個帳號</span>
-              <span className="bg-black/30 px-1.5 py-0.5 rounded text-[11px] font-mono">
-                {isCustomAccountMode ? selectedAccountIds.length : allAccounts.length}/{allAccounts.length}
-              </span>
-              <span className="text-[10px]">{showAccountSelector ? '▲' : '▼'}</span>
-            </button>
-          </div>
-
-          {/* 快速提示或清空選項 */}
-          {isCustomAccountMode && (
-            <div className="flex items-center gap-2 text-xs">
+              {/* 快捷切換「全部帳號」按鈕 */}
               <button
                 type="button"
                 onClick={handleSelectAllAccounts}
-                className="text-blue-400 hover:text-blue-300 underline font-medium cursor-pointer"
+                className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all cursor-pointer ${
+                  !isCustomAccountMode 
+                    ? 'bg-blue-600 text-white border-blue-500 shadow' 
+                    : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white'
+                }`}
               >
-                重設為全部帳號
+                全部帳號
+              </button>
+
+              {/* 自選多個帳號彈窗/面板開關按鈕 */}
+              <button
+                type="button"
+                onClick={() => setShowAccountSelector(prev => !prev)}
+                className={`px-3.5 py-2 text-xs font-medium rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                  showAccountSelector || (isCustomAccountMode && selectedAccountIds.length > 1)
+                    ? 'bg-purple-600 text-white border-purple-500 shadow'
+                    : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white'
+                }`}
+              >
+                <span>自選多個帳號</span>
+                <span className="bg-black/30 px-1.5 py-0.5 rounded text-[11px] font-mono">
+                  {isCustomAccountMode ? selectedAccountIds.length : allAccounts.length}/{allAccounts.length}
+                </span>
+                <span className="text-[10px]">{showAccountSelector ? '▲' : '▼'}</span>
+              </button>
+            </div>
+
+            {/* 帳號範圍狀態標籤 */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">目前帳號範圍:</span>
+              <span className={`text-xs px-2.5 py-1 rounded-full font-medium border ${
+                !isCustomAccountMode 
+                  ? 'bg-blue-900/40 text-blue-300 border-blue-700/50' 
+                  : selectedAccountIds.length === 0
+                  ? 'bg-red-900/40 text-red-300 border-red-700/50'
+                  : 'bg-purple-900/40 text-purple-300 border-purple-700/50'
+              }`}>
+                {accountFilterSummaryText}
+              </span>
+            </div>
+          </div>
+
+          {/* 自選帳號面板 (Collapsible Multi-select Box) */}
+          {showAccountSelector && (
+            <div className="mt-3 p-4 bg-gray-900/90 rounded-xl border border-purple-500/40 shadow-inner space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gray-700">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm text-purple-300">🎯 自選多個帳號分析維度</span>
+                  <span className="text-xs text-gray-400">
+                    (已選取 <strong className="text-white font-mono">{selectedAccountIds.length}</strong> / {allAccounts.length} 個帳號，顯示金額為 {analysisMode === 'monthly' ? `${selectedMonth} 單月` : '全期間累計'})
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={handleSelectMultipleAll}
+                    className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition cursor-pointer"
+                  >
+                    全選 ({allAccounts.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearAllCustomAccounts}
+                    className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition cursor-pointer"
+                  >
+                    清空
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleInvertAccounts}
+                    className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition cursor-pointer"
+                  >
+                    反選
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectAllAccounts}
+                    className="px-2.5 py-1 bg-blue-600/80 hover:bg-blue-600 text-white rounded border border-blue-500 transition cursor-pointer"
+                  >
+                    切換全部帳號模式
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAccountSelector(false)}
+                    className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded border border-gray-700 transition cursor-pointer"
+                  >
+                    收合 ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* 搜尋帳號輸入框 */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="搜尋帳號名稱或 12 位帳號 ID..."
+                  value={accountSearchQuery}
+                  onChange={(e) => setAccountSearchQuery(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500"
+                />
+                {accountSearchQuery && (
+                  <button
+                    onClick={() => setAccountSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* 帳號清單格點 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                {filteredAccountsList.map(acc => {
+                  const isSelected = isCustomAccountMode 
+                    ? selectedAccountIds.includes(acc.accountId) 
+                    : true;
+                  
+                  return (
+                    <div
+                      key={acc.accountId}
+                      className={`p-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 transition-all ${
+                        isSelected 
+                          ? 'bg-purple-950/40 border-purple-600/60 text-white shadow-sm' 
+                          : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:border-gray-600'
+                      }`}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleAccount(acc.accountId)}
+                          className="w-4 h-4 rounded text-purple-600 bg-gray-700 border-gray-600 focus:ring-purple-500 cursor-pointer"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-gray-200 truncate" title={acc.accountName || acc.accountId}>
+                            {acc.accountName || '未命名帳號'}
+                          </div>
+                          <div className="text-[11px] text-gray-400 font-mono flex items-center justify-between">
+                            <span>{acc.accountId}</span>
+                            <span className="text-gray-300 font-medium font-mono">${formatNumber(acc.currentCost, 2)}</span>
+                          </div>
+                        </div>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectOnlyAccount(acc.accountId);
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 bg-gray-700 hover:bg-purple-700 text-gray-300 hover:text-white rounded border border-gray-600 transition whitespace-nowrap cursor-pointer"
+                        title="只選擇這個帳號"
+                      >
+                        僅此帳號
+                      </button>
+                    </div>
+                  );
+                })}
+                {filteredAccountsList.length === 0 && (
+                  <div className="col-span-full py-4 text-center text-gray-400 text-xs">
+                    找不到符合「{accountSearchQuery}」的帳號
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 若為自選模式且有選取帳號，顯示快速標籤列表 */}
+          {isCustomAccountMode && selectedAccountIds.length > 0 && !showAccountSelector && (
+            <div className="pt-1 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-gray-400">已選帳號:</span>
+              {selectedAccountIds.slice(0, 8).map(id => {
+                const acc = allAccounts.find(a => a.accountId === id);
+                return (
+                  <span
+                    key={id}
+                    className="inline-flex items-center gap-1 text-xs bg-purple-900/50 border border-purple-700 text-purple-200 px-2 py-0.5 rounded-md"
+                  >
+                    <span className="truncate max-w-[150px]">{acc?.accountName || id}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAccount(id)}
+                      className="text-purple-300 hover:text-white ml-0.5 text-[10px] cursor-pointer"
+                      title="移除此帳號"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                );
+              })}
+              {selectedAccountIds.length > 8 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAccountSelector(true)}
+                  className="text-xs text-purple-400 hover:text-purple-300 underline font-medium cursor-pointer"
+                >
+                  + 更多 {selectedAccountIds.length - 8} 個帳號
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 扣除規則說明標籤 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 bg-slate-900/80 border border-indigo-500/30 rounded-lg text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-indigo-300 flex items-center gap-1">
+                <span>🛡️</span>
+                <span>已自動套用費用扣除原則：</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-600/40 text-[11px] font-mono">
+                <span>① 排除 AWS ID: 927845210633</span>
+                {excludedAccountCostTotal > 0 && <span>(-${formatNumber(excludedAccountCostTotal)})</span>}
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-600/40 text-[11px] font-mono">
+                <span>② 扣除 OCBAWSskillbuilder 費用</span>
+                {excludedSkillbuilderCostTotal > 0 && <span>(-${formatNumber(excludedSkillbuilderCostTotal)})</span>}
+              </span>
+            </div>
+            <span className="text-[11px] text-gray-400">
+              服務使用分析全模組皆已精確套用上述扣除原則
+            </span>
+          </div>
+
+          {/* 警告提示：自選模式但 0 個帳號選取 */}
+          {isCustomAccountMode && selectedAccountIds.length === 0 && (
+            <div className="p-3 bg-red-900/30 border border-red-700/60 rounded-lg text-red-200 text-xs flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span>⚠️</span>
+                <span>您目前尚未勾選任何帳號，所有報表及圖表數據將顯示為 0。請選擇 1 個或多個帳號，或點擊右側按鈕恢復全部帳號。</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSelectAllAccounts}
+                className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded font-medium transition whitespace-nowrap cursor-pointer"
+              >
+                切換回全部帳號
               </button>
             </div>
           )}
         </div>
 
-        {/* 自選帳號面板 (Collapsible Multi-select Box) */}
-        {showAccountSelector && (
-          <div className="mt-3 p-4 bg-gray-900/90 rounded-xl border border-purple-500/40 shadow-inner space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gray-700">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm text-purple-300">🎯 自選多個帳號分析維度</span>
-                <span className="text-xs text-gray-400">
-                  (已選取 <strong className="text-white font-mono">{selectedAccountIds.length}</strong> / {allAccounts.length} 個帳號，顯示金額為 {analysisMode === 'monthly' ? `${selectedMonth} 單月` : '全期間累計'})
+        {/* 第二步：選擇分析功能 (Step 2: Function Navigation Tabs) */}
+        <div className="pt-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded border border-emerald-800/50">
+              步驟 2. 選擇分析功能
+            </span>
+            <span className="text-xs text-gray-400">
+              請選擇欲檢視的服務使用分析專屬視圖模組
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* 功能 1: 歷史用量/費用與預估成長 (12 / 24 / 36 個月) */}
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('forecast')}
+              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                activeSubTab === 'forecast'
+                  ? 'bg-blue-600/20 border-blue-500 ring-2 ring-blue-500/50 shadow-md text-white'
+                  : 'bg-gray-800/70 border-gray-700 hover:bg-gray-750 text-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <span className="text-lg">📈</span>
+                <span className={activeSubTab === 'forecast' ? 'text-blue-300' : 'text-gray-200'}>
+                  歷史用量/費用與預估成長
                 </span>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
+              <p className="text-xs text-gray-400 mt-1.5">
+                支援純歷史量與預估費用模型 (12 / 24 / 36 個月前瞻預估及 CAGR 成長率)
+              </p>
+            </button>
+
+            {/* 功能 2: 現況花費結構與 RGT 分析 */}
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('structure')}
+              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                activeSubTab === 'structure'
+                  ? 'bg-purple-600/20 border-purple-500 ring-2 ring-purple-500/50 shadow-md text-white'
+                  : 'bg-gray-800/70 border-gray-700 hover:bg-gray-750 text-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <span className="text-lg">🏛️</span>
+                <span className={activeSubTab === 'structure' ? 'text-purple-300' : 'text-gray-200'}>
+                  現況花費結構與 RGT 分析
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                公雲固本維運(R) / 創新開創(G/T) 花費分佈、八大服務分類及 Top 服務明細
+              </p>
+            </button>
+
+            {/* 功能 3: AWS Region & AZ 區域與可用區分析 */}
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('region_az')}
+              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                activeSubTab === 'region_az'
+                  ? 'bg-emerald-600/20 border-emerald-500 ring-2 ring-emerald-500/50 shadow-md text-white'
+                  : 'bg-gray-800/70 border-gray-700 hover:bg-gray-750 text-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <span className="text-lg">🌍</span>
+                <span className={activeSubTab === 'region_az' ? 'text-emerald-300' : 'text-gray-200'}>
+                  AWS Region & AZ 區域分析
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                Tokyo、Taipei (APN1, APE2) 等區域與各可用區服務用量及花費拆解
+              </p>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 依所選功能渲染相應的視圖模組 (Conditional View Rendering) */}
+      {/* ========================================================================= */}
+
+      {/* 視圖 1: 歷史用量/費用與預估成長 (Forecast & History) */}
+      {activeSubTab === 'forecast' && (
+        <ForecastAnalysisSection
+          data={filteredData}
+          accountFilterSummaryText={accountFilterSummaryText}
+        />
+      )}
+
+      {/* 視圖 3: AWS Region & AZ 區域與可用區分析 (Region & AZ Analysis) */}
+      {activeSubTab === 'region_az' && (
+        <RegionAzAnalysisSection
+          data={filteredData}
+          months={months}
+          selectedMonth={selectedMonth}
+          setSelectedMonth={setSelectedMonth}
+          analysisMode={analysisMode}
+          setAnalysisMode={setAnalysisMode}
+          accountFilterSummaryText={accountFilterSummaryText}
+        />
+      )}
+
+      {/* 視圖 2: 現況花費結構與 RGT 分析 (Current Spend Structure & RGT) */}
+      {activeSubTab === 'structure' && (
+        <div className="space-y-8">
+          {/* 時間維度控制列 (專屬於花費結構與 RGT 分析) */}
+          <div className="bg-gray-800 px-5 py-3.5 rounded-xl border border-gray-700 shadow-sm flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-bold text-gray-300 whitespace-nowrap">時間維度:</span>
+              <div className="inline-flex rounded-lg shadow-sm" role="group">
                 <button
                   type="button"
-                  onClick={handleSelectMultipleAll}
-                  className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition"
+                  onClick={() => {
+                    setAnalysisMode('monthly');
+                    setExpandedProductName(null);
+                    setExpandedRgtKey(null);
+                  }}
+                  className={`px-3.5 py-1.5 text-xs font-medium border border-gray-600 rounded-l-lg transition-all cursor-pointer ${
+                    analysisMode === 'monthly' 
+                      ? 'bg-blue-600 text-white border-blue-600 shadow' 
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+                  }`}
                 >
-                  全選 ({allAccounts.length})
+                  單月分析 (Monthly)
                 </button>
                 <button
                   type="button"
-                  onClick={handleClearAllCustomAccounts}
-                  className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition"
+                  onClick={() => {
+                    setAnalysisMode('cumulative');
+                    setExpandedProductName(null);
+                    setExpandedRgtKey(null);
+                  }}
+                  className={`px-3.5 py-1.5 text-xs font-medium border border-gray-600 rounded-r-lg transition-all cursor-pointer ${
+                    analysisMode === 'cumulative' 
+                      ? 'bg-blue-600 text-white border-blue-600 shadow' 
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+                  }`}
                 >
-                  清空
-                </button>
-                <button
-                  type="button"
-                  onClick={handleInvertAccounts}
-                  className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded border border-gray-600 transition"
-                >
-                  反選
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSelectAllAccounts}
-                  className="px-2.5 py-1 bg-blue-600/80 hover:bg-blue-600 text-white rounded border border-blue-500 transition"
-                >
-                  切換全部帳號模式
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAccountSelector(false)}
-                  className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded border border-gray-700 transition"
-                >
-                  收合 ✕
+                  全期間累計 (All-Time)
                 </button>
               </div>
-            </div>
 
-            {/* 搜尋帳號輸入框 */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="搜尋帳號名稱或 12 位帳號 ID..."
-                value={accountSearchQuery}
-                onChange={(e) => setAccountSearchQuery(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500"
-              />
-              {accountSearchQuery && (
-                <button
-                  onClick={() => setAccountSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {/* 帳號清單格點 (Account Items Grid) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1">
-              {filteredAccountsList.map(acc => {
-                const isSelected = isCustomAccountMode 
-                  ? selectedAccountIds.includes(acc.accountId) 
-                  : true;
-                
-                return (
-                  <div
-                    key={acc.accountId}
-                    className={`p-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 transition-all ${
-                      isSelected 
-                        ? 'bg-purple-950/40 border-purple-600/60 text-white shadow-sm' 
-                        : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:border-gray-600'
-                    }`}
+              {analysisMode === 'monthly' && (
+                <div className="flex items-center space-x-2 pl-2">
+                  <label className="text-xs font-medium text-gray-300 whitespace-nowrap">選擇月份:</label>
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => {
+                      setSelectedMonth(e.target.value);
+                      setExpandedProductName(null);
+                      setExpandedRgtKey(null);
+                    }}
+                    className="bg-gray-700 border border-gray-600 text-white text-xs rounded-lg px-2.5 py-1.5 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer"
                   >
-                    <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => handleToggleAccount(acc.accountId)}
-                        className="w-4 h-4 rounded text-purple-600 bg-gray-700 border-gray-600 focus:ring-purple-500 cursor-pointer"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-gray-200 truncate" title={acc.accountName || acc.accountId}>
-                          {acc.accountName || '未命名帳號'}
-                        </div>
-                        <div className="text-[11px] text-gray-400 font-mono flex items-center justify-between">
-                          <span>{acc.accountId}</span>
-                          <span className="text-gray-300 font-medium font-mono">${formatNumber(acc.currentCost, 2)}</span>
-                        </div>
-                      </div>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSelectOnlyAccount(acc.accountId);
-                      }}
-                      className="text-[10px] px-1.5 py-0.5 bg-gray-700 hover:bg-purple-700 text-gray-300 hover:text-white rounded border border-gray-600 transition whitespace-nowrap"
-                      title="只選擇這個帳號"
-                    >
-                      僅此帳號
-                    </button>
-                  </div>
-                );
-              })}
-              {filteredAccountsList.length === 0 && (
-                <div className="col-span-full py-4 text-center text-gray-400 text-xs">
-                  找不到符合「{accountSearchQuery}」的帳號
+                    {months.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
               )}
             </div>
-          </div>
-        )}
 
-        {/* 若為自選模式且有選取帳號，顯示快速標籤列表 */}
-        {isCustomAccountMode && selectedAccountIds.length > 0 && !showAccountSelector && (
-          <div className="pt-2 flex flex-wrap items-center gap-1.5">
-            <span className="text-xs text-gray-400">已選帳號:</span>
-            {selectedAccountIds.slice(0, 8).map(id => {
-              const acc = allAccounts.find(a => a.accountId === id);
-              return (
-                <span
-                  key={id}
-                  className="inline-flex items-center gap-1 text-xs bg-purple-900/50 border border-purple-700 text-purple-200 px-2 py-0.5 rounded-md"
-                >
-                  <span className="truncate max-w-[150px]">{acc?.accountName || id}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleAccount(id)}
-                    className="text-purple-300 hover:text-white ml-0.5 text-[10px]"
-                    title="移除此帳號"
-                  >
-                    ✕
-                  </button>
-                </span>
-              );
-            })}
-            {selectedAccountIds.length > 8 && (
-              <button
-                type="button"
-                onClick={() => setShowAccountSelector(true)}
-                className="text-xs text-purple-400 hover:text-purple-300 underline font-medium"
-              >
-                + 更多 {selectedAccountIds.length - 8} 個帳號
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* 扣除規則說明標籤 (自動排除 AWS ID: 927845210633 及 OCBAWSskillbuilder) */}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 bg-slate-900/80 border border-indigo-500/30 rounded-lg text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-indigo-300 flex items-center gap-1">
-              <span>🛡️</span>
-              <span>已自動套用費用扣除原則：</span>
-            </span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-600/40 text-[11px] font-mono">
-              <span>① 排除 AWS ID: 927845210633</span>
-              {excludedAccountCostTotal > 0 && <span>(-${formatNumber(excludedAccountCostTotal)})</span>}
-            </span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-600/40 text-[11px] font-mono">
-              <span>② 扣除 OCBAWSskillbuilder 費用</span>
-              {excludedSkillbuilderCostTotal > 0 && <span>(-${formatNumber(excludedSkillbuilderCostTotal)})</span>}
-            </span>
-          </div>
-          <span className="text-[11px] text-gray-400">
-            公雲使用分佈 (R/G/T)、八大服務分類及產品明細均已扣除上述費用
-          </span>
-        </div>
-
-        {/* 警告提示：自選模式但 0 個帳號選取 */}
-        {isCustomAccountMode && selectedAccountIds.length === 0 && (
-          <div className="p-3 bg-red-900/30 border border-red-700/60 rounded-lg text-red-200 text-xs flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span>⚠️</span>
-              <span>您目前尚未勾選任何帳號，所有報表及圖表數據將顯示為 0。請選擇 1 個或多個帳號，或點擊右側按鈕恢復全部帳號。</span>
+            <div className="text-xs text-gray-400">
+              顯示帳號: <span className="text-purple-300 font-semibold">{accountFilterSummaryText}</span>
             </div>
-            <button
-              type="button"
-              onClick={handleSelectAllAccounts}
-              className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded font-medium transition whitespace-nowrap"
-            >
-              切換回全部帳號
-            </button>
           </div>
-        )}
-      </div>
 
       {/* ========================================================================= */}
       {/* 1. 公雲使用花費分佈 (長官決策看板) - Public Cloud Spend Distribution Table */}
@@ -2095,6 +2202,8 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
           </div>
         </div>
       </Card>
+        </div>
+      )}
       
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {

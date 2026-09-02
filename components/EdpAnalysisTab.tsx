@@ -606,6 +606,7 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
           lastActualMonth={lastActualMonth}
           futureMonthsList={futureMonthsList}
           discountRate={config.discountRate}
+          actualMonths={edpResult.actualMonths}
         />
       )}
 
