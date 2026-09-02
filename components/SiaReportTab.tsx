@@ -774,7 +774,8 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
                   itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
-                  formatter={(value: number) => [formatCurrency(value), 'Linux/RHEL EC2 費用']} 
+                  labelFormatter={(label) => `計費月份: ${label}`}
+                  formatter={(value: number) => [formatCurrency(value), 'Linux / Red Hat EC2 費用']} 
                 />
                 <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
                 <ReferenceLine y={220000} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: '$220k 門檻', fill: '#f59e0b', fontSize: 11, position: 'insideTopRight' }} />
@@ -904,7 +905,11 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
                   itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
-                  formatter={(value: number, name: string) => [name.includes('佔比') ? `${formatNumber(value)}%` : formatInteger(value), name]} 
+                  labelFormatter={(label) => `計費月份: ${label}`}
+                  formatter={(value: number, name: string) => [
+                    name.includes('佔比') ? `${formatNumber(value, 2)}%` : `${formatInteger(value)} 小時 (hrs)`, 
+                    name
+                  ]} 
                 />
                 <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
                 <ReferenceLine yAxisId="right" y={15} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: '15% 門檻', fill: '#f59e0b', fontSize: 11, position: 'insideTopRight' }} />
@@ -1020,7 +1025,8 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
                   itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
-                  formatter={(value: number) => [formatCurrency(value), 'GenAI 費用']} 
+                  labelFormatter={(label) => `計費月份: ${label}`}
+                  formatter={(value: number) => [formatCurrency(value), 'Generative AI (Bedrock / Amazon Q) 費用']} 
                 />
                 <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
                 <Line type="monotone" dataKey="genAiCost" name="Generative AI (Bedrock / Amazon Q) 費用" stroke="#2dd4bf" strokeWidth={3} activeDot={{ r: 7 }} />
@@ -1172,6 +1178,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }} 
                   itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
+                  labelFormatter={(label) => `計費月份: ${label}`}
                   formatter={(value: number, name: string) => [
                     name.includes('佔比') ? `${formatNumber(value, 2)}%` : formatCurrency(value), 
                     name

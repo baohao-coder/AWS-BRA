@@ -562,9 +562,19 @@ export const ForecastAnalysisSection: React.FC<ForecastAnalysisSectionProps> = (
                     contentStyle={{ backgroundColor: '#111827', border: '1px solid #059669', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                     itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                     labelStyle={{ color: '#34d399', fontWeight: 'bold', marginBottom: '4px' }}
-                    formatter={(value: any, name: string) => {
+                    labelFormatter={(label, items) => {
+                      const p = items?.[0]?.payload;
+                      const typeLabel = p?.isHistorical ? '歷史實際月份' : '未來預估推估月份';
+                      const mom = p?.monthOverMonthGrowthRate ? ` • 月增長: ${p.monthOverMonthGrowthRate >= 0 ? '+' : ''}${p.monthOverMonthGrowthRate.toFixed(1)}%` : '';
+                      return `計費月份: ${label} (${typeLabel}${mom})`;
+                    }}
+                    formatter={(value: any, name: string, item: any) => {
                       if (value === null || value === undefined || isNaN(Number(value))) return ['-', name];
-                      return [`$${formatNumber(Number(value))}`, name];
+                      const valStr = `$${formatNumber(Number(value))} USD`;
+                      if (name.includes('累計')) return [valStr, `【${selectedService}】歷史+預估累計金額`];
+                      if (name.includes('實際')) return [valStr, `【${selectedService}】當月實際費用`];
+                      if (name.includes('預估')) return [valStr, `【${selectedService}】當月推估費用`];
+                      return [valStr, name];
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: '12px', color: '#f3f4f6' }} />
@@ -665,9 +675,19 @@ export const ForecastAnalysisSection: React.FC<ForecastAnalysisSectionProps> = (
                     contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                     itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                     labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
+                    labelFormatter={(label, items) => {
+                      const p = items?.[0]?.payload;
+                      const typeLabel = p?.isHistorical ? '歷史實際月份' : '未來預估推估月份';
+                      const mom = p?.月增長率 !== undefined ? ` • 月增長率: ${p.月增長率 >= 0 ? '+' : ''}${p.月增長率.toFixed(1)}%` : '';
+                      return `計費月份: ${label} (${typeLabel}${mom})`;
+                    }}
                     formatter={(value: any, name: string) => {
                       if (value === null || value === undefined || isNaN(Number(value))) return ['-', name];
-                      return [`$${formatNumber(Number(value))}`, name];
+                      const valStr = `$${formatNumber(Number(value))} USD`;
+                      if (name === '累計費用') return [valStr, '全期累計總支出 (實際 + 預估)'];
+                      if (name === '歷史實際費用') return [valStr, '當月歷史實際支出'];
+                      if (name === '預估費用') return [valStr, '當月模型預估推估支出'];
+                      return [valStr, name];
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: '12px', color: '#f3f4f6' }} />
@@ -768,9 +788,14 @@ export const ForecastAnalysisSection: React.FC<ForecastAnalysisSectionProps> = (
                     contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                     itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                     labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
+                    labelFormatter={(label, items) => {
+                      const p = items?.[0]?.payload;
+                      const typeLabel = p?.isHistorical ? '歷史實際' : '預估推估';
+                      return `計費月份: ${label} (${typeLabel})`;
+                    }}
                     formatter={(value: any, name: string) => {
                       if (value === null || value === undefined || isNaN(Number(value))) return ['-', name];
-                      return [`$${formatNumber(Number(value))}`, name];
+                      return [`$${formatNumber(Number(value))} USD`, `${name} 費用`];
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: '11px', color: '#f3f4f6' }} />

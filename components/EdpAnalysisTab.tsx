@@ -908,8 +908,22 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                     itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                     labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                    formatter={(val: number, name: string) => [formatCurrency(val), name]}
-                    labelFormatter={(label) => `計費月份: ${label}`}
+                    labelFormatter={(label, items) => {
+                      const p = items?.[0]?.payload;
+                      const typeLabel = p?.isForecast ? '預估月份 (含專案/增量)' : '歷史實際月份';
+                      return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel})`;
+                    }}
+                    formatter={(val: number, name: string, item: any) => {
+                      const p = item?.payload;
+                      if (name.includes('EDP 費用') || name.includes('totalEdpAdjustedCost')) {
+                        const labelText = p?.isForecast ? '未來預估 EDP 費用 (含專案/增量)' : '歷史實際 EDP 費用 (89折後+Marketplace)';
+                        return [formatCurrency(val), labelText];
+                      }
+                      if (name.includes('MRR') || name.includes('mrrTarget')) {
+                        return [formatCurrency(val), '合約每月 MRR 承諾目標'];
+                      }
+                      return [formatCurrency(val), name];
+                    }}
                   />
                   <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px' }} />
                   <Bar 
@@ -986,7 +1000,16 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                       contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                       itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                       labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      formatter={(val: number) => [formatVarianceText(val), '差異額 (Variance)']}
+                      labelFormatter={(label, items) => {
+                        const p = items?.[0]?.payload;
+                        const typeLabel = p?.isForecast ? '預估月份' : '歷史實際';
+                        return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel})`;
+                      }}
+                      formatter={(val: number, name: string, item: any) => {
+                        const p = item?.payload;
+                        const statusLabel = p?.variance >= 0 ? '月度超額/達標額 (Surplus)' : '月度未達目標差額 (Shortfall)';
+                        return [formatVarianceText(val), statusLabel];
+                      }}
                     />
                     <Bar dataKey="variance" name="月度差異額 (Variance)" radius={[4, 4, 0, 0]}>
                       <LabelList 
@@ -1036,7 +1059,18 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                       contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                       itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                       labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      formatter={(val: number) => [`${val}%`, '月度達成率']}
+                      labelFormatter={(label, items) => {
+                        const p = items?.[0]?.payload;
+                        const typeLabel = p?.isForecast ? '預估月份' : '歷史實際';
+                        return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel})`;
+                      }}
+                      formatter={(val: number, name: string, item: any) => {
+                        const p = item?.payload;
+                        return [
+                          `${val}% (當月花費: ${formatCurrency(p?.totalEdpAdjustedCost || 0)} / 目標: ${formatCurrency(p?.mrrTarget || 0)})`, 
+                          '月度承諾達成率'
+                        ];
+                      }}
                     />
                     <Line 
                       type="monotone" 
@@ -1182,7 +1216,13 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                     itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                     labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                    formatter={(val: number, name: string) => [`$${val}M (USD)`, name]}
+                    labelFormatter={(label) => `合約年度: ${label}`}
+                    formatter={(val: number, name: string) => {
+                      if (name.includes('實際')) return [`$${val}M USD`, '歷史實際已發生費用 ($M)'];
+                      if (name.includes('預估')) return [`$${val}M USD`, '未來預估推估費用 ($M)'];
+                      if (name.includes('目標')) return [`$${val}M USD`, '該年度承諾目標額 ($M)'];
+                      return [`$${val}M (USD)`, name];
+                    }}
                   />
                   <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px' }} />
                   <Bar 
@@ -1260,7 +1300,25 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                     itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                     labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                    formatter={(val: number) => [formatCurrency(val), '累計金額']}
+                    labelFormatter={(label, items) => {
+                      const p = items?.[0]?.payload;
+                      const typeLabel = p?.isForecast ? '含未來預估' : '歷史實際';
+                      const rateInfo = p?.achievementRate ? ` • 累計達成率: ${p.achievementRate}` : '';
+                      return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel}${rateInfo})`;
+                    }}
+                    formatter={(val: number, name: string, item: any) => {
+                      const p = item?.payload;
+                      if (name === 'cumulativeActual' || name.includes('全期累計費用') || name.includes('實際+預估')) {
+                        const seriesTitle = p?.isForecast 
+                          ? '全期間累計總花費 (歷史實際 + 未來預估推估)' 
+                          : '歷史實際累計總花費 (截至該月)';
+                        return [formatCurrency(val), seriesTitle];
+                      }
+                      if (name === 'cumulativeTarget' || name.includes('合約累計目標') || name.includes('目標')) {
+                        return [formatCurrency(val), '3年 $20M 合約承諾累計目標基準線'];
+                      }
+                      return [formatCurrency(val), name];
+                    }}
                   />
                   <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px' }} />
                   <Line 

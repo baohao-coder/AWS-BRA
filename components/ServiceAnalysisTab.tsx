@@ -1477,7 +1477,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                       itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                       labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      formatter={(value: number) => [`$${formatNumber(value)} (${((value / (rgtAnalysis.totalCost || 1)) * 100).toFixed(1)}%)`, '金額']}
+                      formatter={(value: number, name: string) => [`$${formatNumber(value)} (${((value / (rgtAnalysis.totalCost || 1)) * 100).toFixed(1)}%)`, name || '分類費用']}
                     />
                     <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '12px', color: '#f3f4f6' }} />
                   </PieChart>
@@ -1497,7 +1497,11 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                       itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                       labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      formatter={(value: number) => [`$${formatNumber(value)} (${((value / (rgtAnalysis.totalCost || 1)) * 100).toFixed(2)}%)`, '金額']}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.name ? `創新服務: ${payload[0].payload.name}` : ''}
+                      formatter={(value: number, name: string, item: any) => [
+                        `$${formatNumber(value)} (${((value / (rgtAnalysis.totalCost || 1)) * 100).toFixed(2)}%)`, 
+                        item?.payload?.name ? `${item.payload.name} 費用` : '細項花費'
+                      ]}
                     />
                     <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
                       {rgtAnalysis.tBreakdown.map((entry, index) => (
@@ -1779,10 +1783,10 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                       itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                       labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      formatter={(value: number) => {
+                      formatter={(value: number, name: string) => {
                         const total = categoryAnalysis.totalSpend;
                         const perc = total > 0 ? (value / total) * 100 : 0;
-                        return [`$${formatNumber(value)} (${perc.toFixed(1)}%)`, '費用'];
+                        return [`$${formatNumber(value)} (${perc.toFixed(1)}%)`, name ? `${name} 分類花費` : '分類花費'];
                       }}
                     />
                     <Legend 
@@ -1816,8 +1820,11 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                       itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                       labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      labelFormatter={(_, payload) => payload[0]?.payload?.fullName || ''}
-                      formatter={(value: number) => [`$${formatNumber(value)}`, '總費用']}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+                      formatter={(value: number, name: string, item: any) => [
+                        `$${formatNumber(value)} (${((value / (categoryAnalysis.totalSpend || 1)) * 100).toFixed(2)}%)`, 
+                        item?.payload?.fullName ? `${item.payload.fullName} 總費用` : '分類總費用'
+                      ]}
                     />
                     <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
                       {categoryAnalysis.categories.map((entry, index) => (
@@ -1993,10 +2000,15 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                         contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                         itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                         labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                        formatter={(value: number, name, props) => [
-                          `$${formatNumber(value)} (${props?.payload?.category ? `${props.payload.category} - ${CATEGORY_METAS[props.payload.category as ServiceCategory]?.name || ''}` : ''})`, 
-                          'Total Cost'
-                        ]}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.name ? `服務項目: ${payload[0].payload.name}` : ''}
+                        formatter={(value: number, name, props) => {
+                          const catName = props?.payload?.category ? `${props.payload.category} - ${CATEGORY_METAS[props.payload.category as ServiceCategory]?.name || ''}` : '';
+                          const serviceName = props?.payload?.name ? `${props.payload.name} 費用` : '服務費用';
+                          return [
+                            `$${formatNumber(value)} (${catName})`, 
+                            serviceName
+                          ];
+                        }}
                     />
                     <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
                         {top10ChartData.map((entry, index) => {

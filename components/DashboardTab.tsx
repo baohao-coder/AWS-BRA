@@ -274,7 +274,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                 contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                 itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                 labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                formatter={(value:number) => [formatNumber(value), 'Total Amount of Payment']}
+                labelFormatter={(label) => `計費月份: ${label}`}
+                formatter={(value: number) => [`$${formatNumber(value)} USD`, '當月總支付金額 (Monthly Total Payment)']}
               />
               <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
               <Line type="monotone" dataKey="Total Amount of Payment (USD)" stroke="#38bdf8" strokeWidth={3} activeDot={{ r: 8 }} />
@@ -295,7 +296,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({ data }) => {
                 contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                 itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                 labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                formatter={(value: number) => [value, 'Number of Accounts']}
+                labelFormatter={(label) => `計費月份: ${label}`}
+                formatter={(value: number) => [`${value} 個`, '有效帳號總數 (Account Count)']}
               />
               <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
               <Line type="stepAfter" dataKey="Number of Accounts" stroke="#4ade80" strokeWidth={3} activeDot={{ r: 6 }} />

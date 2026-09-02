@@ -537,9 +537,9 @@ export const RegionAzAnalysisSection: React.FC<RegionAzAnalysisSectionProps> = (
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                   itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                  formatter={(value: number) => {
+                  formatter={(value: number, name: string) => {
                     const perc = totalCost > 0 ? (value / totalCost) * 100 : 0;
-                    return [`$${formatNumber(value)} (${perc.toFixed(1)}%)`, '費用金額'];
+                    return [`$${formatNumber(value)} (${perc.toFixed(1)}%)`, name ? `${name} 區域花費` : '區域花費'];
                   }}
                 />
                 <Legend 
@@ -573,8 +573,11 @@ export const RegionAzAnalysisSection: React.FC<RegionAzAnalysisSectionProps> = (
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
                   itemStyle={{ color: '#ffffff', fontWeight: 500 }}
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                  labelFormatter={(_, payload) => payload[0]?.payload?.fullName || ''}
-                  formatter={(value: number) => [`$${formatNumber(value)} (${((value / (totalCost || 1)) * 100).toFixed(2)}%)`, '總花費']}
+                  labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+                  formatter={(value: number, name: string, item: any) => [
+                    `$${formatNumber(value)} (${((value / (totalCost || 1)) * 100).toFixed(2)}%)`, 
+                    item?.payload?.fullName ? `${item.payload.fullName} 花費` : '可用區花費'
+                  ]}
                 />
                 <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
                   {azList.slice(0, 8).map((entry, index) => (
