@@ -240,7 +240,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const sortedData = useMemo(() => [...sanitizedData].sort((a, b) => a.month.localeCompare(b.month)), [sanitizedData]);
   const months = useMemo(() => sortedData.map(d => d.month), [sortedData]);
   
-  // Extract all unique accounts across the dataset with total cost
+  // Extract all unique accounts across the dataset with total cost, sorted by Account Name A-Z
   const allAccounts = useMemo<AccountOption[]>(() => {
     const accMap = new Map<string, { accountId: string; accountName: string; totalCost: number }>();
     sortedData.forEach(m => {
@@ -255,7 +255,11 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
         accMap.get(a.accountId)!.totalCost += cost;
       });
     });
-    return Array.from(accMap.values()).sort((a, b) => b.totalCost - a.totalCost);
+    return Array.from(accMap.values()).sort((a, b) => {
+      const nameA = (a.accountName || a.accountId || '').trim();
+      const nameB = (b.accountName || b.accountId || '').trim();
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
   }, [sortedData]);
 
   const [activeSubTab, setActiveSubTab] = useState<ServiceAnalysisSubTab>('forecast');
@@ -272,7 +276,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const [accountSearchQuery, setAccountSearchQuery] = useState<string>('');
   const [showAccountSelector, setShowAccountSelector] = useState<boolean>(false);
 
-  // Dynamic account list reflecting cost in current mode (monthly or cumulative)
+  // Dynamic account list reflecting cost in current mode (monthly or cumulative), sorted by Account Name A-Z
   const currentModeAccounts = useMemo(() => {
     const costMap = new Map<string, number>();
     
@@ -300,7 +304,11 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
     return allAccounts.map(acc => ({
       ...acc,
       currentCost: costMap.get(acc.accountId) || 0
-    })).sort((a, b) => b.currentCost - a.currentCost);
+    })).sort((a, b) => {
+      const nameA = (a.accountName || a.accountId || '').trim();
+      const nameB = (b.accountName || b.accountId || '').trim();
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
   }, [allAccounts, sortedData, analysisMode, selectedMonth]);
 
   const [sortConfig, setSortConfig] = useState<{ key: ProductSortKey; direction: SortDirection }>({
