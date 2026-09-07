@@ -3,7 +3,7 @@ import { BillingData } from '../types';
 import Card from './common/Card';
 import { 
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, Cell, LabelList, Legend, ComposedChart 
+  ResponsiveContainer, Cell, LabelList, Legend, ComposedChart, ReferenceLine 
 } from 'recharts';
 import { 
   calculateEdpAnalysis, 
@@ -53,6 +53,12 @@ const formatVarianceText = (val: number): string => {
   if (typeof val !== 'number' || isNaN(val)) return '$0';
   const sign = val > 0 ? '+' : '';
   return `${sign}${formatShortCurrency(val)}`;
+};
+
+const formatFullVarianceText = (val: number): string => {
+  if (typeof val !== 'number' || isNaN(val)) return '$0';
+  const sign = val > 0 ? '+' : (val < 0 ? '-' : '');
+  return `${sign}${formatCurrency(Math.abs(val))}`;
 };
 
 const formatPercent = (val: number, decimals: number = 1): string => {
@@ -258,6 +264,10 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
   // Chart dataset for monthly view with direct display labels
   const monthlyChartData = useMemo(() => {
     return displayedMonths.map(m => {
+      const cumulativeVariance = selectedYearFilter === 'ALL'
+        ? m.cumulativeAllVariance
+        : m.cumulativeYearVariance;
+
       return {
         month: m.month,
         contractYear: m.contractYear,
@@ -267,6 +277,9 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
         projectAdditionsCost: Math.round(m.projectAdditionsCost || 0),
         mrrTarget: Math.round(m.mrrTarget),
         variance: Math.round(m.variance),
+        cumulativeVariance: Math.round(cumulativeVariance),
+        cumulativeAllVariance: Math.round(m.cumulativeAllVariance),
+        cumulativeYearVariance: Math.round(m.cumulativeYearVariance),
         achievementRate: Number(m.achievementRate.toFixed(1)),
         originalTotal: Math.round(m.originalTotal),
         savings: Math.round(m.totalSavings),
@@ -275,11 +288,13 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
         displayActual: `${m.isForecast ? '[預估] ' : ''}${formatShortCurrency(m.totalEdpAdjustedCost)}`,
         displayTarget: formatShortCurrency(m.mrrTarget),
         displayVariance: formatVarianceText(m.variance),
+        displayCumulativeVariance: formatVarianceText(cumulativeVariance),
         displayAchievement: `${m.achievementRate.toFixed(1)}%`,
         isSurplus: m.variance >= 0,
+        isCumulativeSurplus: cumulativeVariance >= 0,
       };
     });
-  }, [displayedMonths]);
+  }, [displayedMonths, selectedYearFilter]);
 
   // Chart dataset for yearly view
   const yearlyChartData = useMemo(() => {
@@ -334,6 +349,8 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
       'EDP 最終金額 (Total EDP Spend USD)': Number(m.totalEdpAdjustedCost.toFixed(2)),
       'EDP 合約 MRR 目標 (Target USD)': Number(m.mrrTarget.toFixed(2)),
       '月度差異額 (Variance USD)': Number(m.variance.toFixed(2)),
+      '月差異累計 (全期累計 USD)': Number(m.cumulativeAllVariance.toFixed(2)),
+      '年度差異累計 (當年度累計 USD)': Number(m.cumulativeYearVariance.toFixed(2)),
       '月度達成率 (Achievement Rate %)': `${m.achievementRate.toFixed(2)}%`,
       'EDP 累計節省費用 (Savings USD)': Number(m.totalSavings.toFixed(2)),
       '年度累計費用 (Cumulative Year USD)': Number(m.cumulativeYearAdjustedCost.toFixed(2)),
@@ -972,128 +989,96 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
             </div>
           </Card>
 
-          {/* 圖表 2: 每月差異額 (Variance: 實際/預估 - 目標) 與達成率 (直接顯示數字) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card title="每月差異額 (Variance = 實際/預估 - 目標) 直接標記圖">
-              <div className="text-xs text-gray-300 mb-4 font-medium">
-                正值 (綠色) 代表超額/達標；負值 (紅色) 代表未達合約每月 MRR 承諾額
+          {/* 圖表 2: 每月差異額 (Variance = 實際/預估 - 目標) 直接標記圖 */}
+          <Card title="每月差異額 (Variance = 實際/預估 - 目標) 直接標記圖">
+            <div className="text-xs text-gray-300 mb-4 flex flex-wrap items-center justify-between gap-2 font-medium">
+              <div>
+                長條代表當月差異 (<span className="text-emerald-400 font-bold">綠色超額/達標</span> / <span className="text-rose-400 font-bold">紅色未達</span>)；<span className="text-sky-400 font-bold">天藍平滑折線為「月差異累計」走勢</span>
               </div>
-              <div className="h-80 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={monthlyChartData}
-                    margin={{ top: 28, right: 20, left: 10, bottom: 20 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis 
-                      dataKey="month" 
-                      stroke="#9ca3af" 
-                      tick={{ fill: '#f3f4f6', fontSize: 10, fontWeight: 'bold' }}
-                      interval={monthlyChartData.length > 24 ? 1 : 0}
+              <div className="text-gray-400 text-[11px] font-mono">
+                {selectedYearFilter === 'ALL' ? '累計基準: 全期間累計' : `累計基準: ${selectedYearFilter} 年度累計`}
+              </div>
+            </div>
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={monthlyChartData}
+                  margin={{ top: 28, right: 20, left: 10, bottom: 20 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis 
+                    dataKey="month" 
+                    stroke="#9ca3af" 
+                    tick={{ fill: '#f3f4f6', fontSize: 10, fontWeight: 'bold' }}
+                    interval={monthlyChartData.length > 24 ? 1 : 0}
+                  />
+                  <YAxis 
+                    stroke="#9ca3af" 
+                    tick={{ fill: '#f3f4f6', fontSize: 11 }}
+                    tickFormatter={(val) => formatShortCurrency(val)}
+                  />
+                  <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="3 3" />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                    itemStyle={{ color: '#ffffff', fontWeight: 500 }}
+                    labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
+                    labelFormatter={(label, items) => {
+                      const p = items?.[0]?.payload;
+                      const typeLabel = p?.isForecast ? '預估月份' : '歷史實際';
+                      return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel})`;
+                    }}
+                    formatter={(val: any, name: string, item: any) => {
+                      if (val === null || val === undefined || isNaN(Number(val))) return ['-', name];
+                      const numVal = Number(val);
+                      if (name.includes('累計') || item?.dataKey === 'cumulativeVariance') {
+                        const status = numVal >= 0 ? '月差異累計 (超額/達標 Surplus)' : '月差異累計 (未達目標 Shortfall)';
+                        return [`${formatFullVarianceText(numVal)} (${formatShortCurrency(numVal)})`, status];
+                      }
+                      const statusLabel = numVal >= 0 ? '當月差異額 (超額/達標 Surplus)' : '當月差異額 (未達目標 Shortfall)';
+                      return [`${formatFullVarianceText(numVal)} (${formatShortCurrency(numVal)})`, statusLabel];
+                    }}
+                  />
+                  <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '8px', fontSize: '11px' }} />
+                  <Bar dataKey="variance" name="月度差異額 (Variance)" radius={[4, 4, 0, 0]}>
+                    <LabelList 
+                      dataKey="displayVariance" 
+                      position="top" 
+                      offset={6}
+                      fill="#ffffff" 
+                      fontSize={11} 
+                      fontWeight="bold"
                     />
-                    <YAxis 
-                      stroke="#9ca3af" 
-                      tick={{ fill: '#f3f4f6', fontSize: 11 }}
-                      tickFormatter={(val) => formatShortCurrency(val)}
-                    />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
-                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
-                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      labelFormatter={(label, items) => {
-                        const p = items?.[0]?.payload;
-                        const typeLabel = p?.isForecast ? '預估月份' : '歷史實際';
-                        return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel})`;
-                      }}
-                      formatter={(val: number, name: string, item: any) => {
-                        const p = item?.payload;
-                        const statusLabel = p?.variance >= 0 ? '月度超額/達標額 (Surplus)' : '月度未達目標差額 (Shortfall)';
-                        return [formatVarianceText(val), statusLabel];
-                      }}
-                    />
-                    <Bar dataKey="variance" name="月度差異額 (Variance)" radius={[4, 4, 0, 0]}>
-                      <LabelList 
-                        dataKey="displayVariance" 
-                        position="top" 
-                        offset={6}
-                        fill="#ffffff" 
-                        fontSize={11} 
-                        fontWeight="bold"
+                    {monthlyChartData.map((entry, index) => (
+                      <Cell 
+                        key={`var-cell-${index}`} 
+                        fill={entry.variance >= 0 ? '#10b981' : '#f43f5e'} 
                       />
-                      {monthlyChartData.map((entry, index) => (
-                        <Cell 
-                          key={`var-cell-${index}`} 
-                          fill={entry.variance >= 0 ? '#10b981' : '#f43f5e'} 
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-
-            <Card title="每月合約達成率 (Achievement Rate %) 直接標記圖">
-              <div className="text-xs text-gray-300 mb-4 font-medium">
-                基準線 100% 代表完全達成該月 MRR 目標
-              </div>
-              <div className="h-80 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={monthlyChartData}
-                    margin={{ top: 28, right: 20, left: 10, bottom: 20 }}
+                    ))}
+                  </Bar>
+                  <Line 
+                    type="monotone" 
+                    dataKey="cumulativeVariance" 
+                    name="月差異累計 (Cumulative Variance)" 
+                    stroke="#38bdf8" 
+                    strokeWidth={3} 
+                    dot={{ r: 3, fill: '#38bdf8', stroke: '#0284c7', strokeWidth: 1 }}
+                    activeDot={{ r: 6, stroke: '#ffffff', strokeWidth: 2, fill: '#38bdf8' }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis 
-                      dataKey="month" 
-                      stroke="#9ca3af" 
-                      tick={{ fill: '#f3f4f6', fontSize: 10, fontWeight: 'bold' }}
-                      interval={monthlyChartData.length > 24 ? 1 : 0}
-                    />
-                    <YAxis 
-                      stroke="#9ca3af" 
-                      tick={{ fill: '#f3f4f6', fontSize: 11 }}
-                      tickFormatter={(val) => `${val}%`}
-                      domain={[0, 'auto']}
-                    />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#111827', borderColor: '#4b5563', borderRadius: '0.75rem', color: '#ffffff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
-                      itemStyle={{ color: '#ffffff', fontWeight: 500 }}
-                      labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }}
-                      labelFormatter={(label, items) => {
-                        const p = items?.[0]?.payload;
-                        const typeLabel = p?.isForecast ? '預估月份' : '歷史實際';
-                        return `計費月份: ${label} [${p?.contractYear || ''}] (${typeLabel})`;
-                      }}
-                      formatter={(val: number, name: string, item: any) => {
-                        const p = item?.payload;
-                        return [
-                          `${val}% (當月花費: ${formatCurrency(p?.totalEdpAdjustedCost || 0)} / 目標: ${formatCurrency(p?.mrrTarget || 0)})`, 
-                          '月度承諾達成率'
-                        ];
-                      }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="achievementRate" 
-                      name="達成率 (%)" 
-                      stroke="#a855f7" 
-                      strokeWidth={3} 
-                      dot={{ r: 4, fill: '#a855f7' }}
-                    >
+                    {monthlyChartData.length <= 24 && (
                       <LabelList 
-                        dataKey="displayAchievement" 
+                        dataKey="displayCumulativeVariance" 
                         position="top" 
-                        offset={6}
-                        fill="#e9d5ff" 
-                        fontSize={11} 
-                        fontWeight="bold"
+                        offset={8}
+                        fill="#7dd3fc" 
+                        fontSize={10} 
+                        fontWeight="bold" 
                       />
-                    </Line>
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          </div>
+                    )}
+                  </Line>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
 
           {/* 月度 EDP 對比明細數據表格 */}
           <Card title="EDP 月度明細對比數據清單 (Monthly Detail Table)">
@@ -1113,6 +1098,7 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                     <th className="px-3 py-3 text-right text-white font-bold bg-blue-950/40">EDP 最終金額</th>
                     <th className="px-3 py-3 text-right text-amber-300">MRR 目標</th>
                     <th className="px-3 py-3 text-right">月差異額</th>
+                    <th className="px-3 py-3 text-right text-sky-300">月差異累計</th>
                     <th className="px-3 py-3 text-right font-bold">達成率</th>
                     <th className="px-3 py-3 text-right text-purple-300">累計達成率</th>
                   </tr>
@@ -1120,6 +1106,11 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                 <tbody className="divide-y divide-gray-700/60 font-mono">
                   {displayedMonths.map((m) => {
                     const isSurplus = m.variance >= 0;
+                    const cumulativeVariance = selectedYearFilter === 'ALL'
+                      ? m.cumulativeAllVariance
+                      : m.cumulativeYearVariance;
+                    const isCumulativeSurplus = cumulativeVariance >= 0;
+
                     return (
                       <tr key={m.month} className={`hover:bg-gray-700/40 transition ${m.isForecast ? 'bg-indigo-950/10' : ''}`}>
                         <td className="px-3 py-2.5 font-bold text-white font-sans">{m.month}</td>
@@ -1157,6 +1148,14 @@ const EdpAnalysisTab: React.FC<EdpAnalysisTabProps> = ({ data }) => {
                         <td className="px-3 py-2.5 text-right text-amber-300">{formatCurrency(m.mrrTarget)}</td>
                         <td className={`px-3 py-2.5 text-right font-bold ${isSurplus ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {formatVarianceText(m.variance)}
+                        </td>
+                        <td 
+                          className={`px-3 py-2.5 text-right font-bold ${isCumulativeSurplus ? 'text-emerald-400' : 'text-rose-400'}`}
+                          title={selectedYearFilter === 'ALL' 
+                            ? `全期月差異累計: ${formatFullVarianceText(m.cumulativeAllVariance)} (當年度月差異累計: ${formatFullVarianceText(m.cumulativeYearVariance)})` 
+                            : `該年度月差異累計: ${formatFullVarianceText(m.cumulativeYearVariance)}`}
+                        >
+                          {formatVarianceText(cumulativeVariance)}
                         </td>
                         <td className={`px-3 py-2.5 text-right font-bold ${isSurplus ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {formatPercent(m.achievementRate)}
