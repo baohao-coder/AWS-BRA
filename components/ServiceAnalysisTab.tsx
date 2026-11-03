@@ -17,12 +17,14 @@ import {
 } from 'recharts';
 import ForecastAnalysisSection from './service-analysis/ForecastAnalysisSection';
 import RegionAzAnalysisSection from './service-analysis/RegionAzAnalysisSection';
+import ProductUsageQuerySection from './service-analysis/ProductUsageQuerySection';
+import RiSpAnalysisSection from './service-analysis/RiSpAnalysisSection';
 
 interface ServiceAnalysisTabProps {
   data: BillingData;
 }
 
-export type ServiceAnalysisSubTab = 'forecast' | 'structure' | 'region_az';
+export type ServiceAnalysisSubTab = 'forecast' | 'structure' | 'risp_recommendation' | 'region_az';
 
 interface ProductAccountSummary {
   accountId: string;
@@ -269,6 +271,17 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
   const [expandedRgtKey, setExpandedRgtKey] = useState<string | null>(null);
   const [expandedCategoryId, setExpandedCategoryId] = useState<ServiceCategory | null>(null);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<ServiceCategory | 'ALL'>('ALL');
+  const [selectedQueryProduct, setSelectedQueryProduct] = useState<string>('');
+
+  const handleJumpToProductQuery = (prodName: string) => {
+    setSelectedQueryProduct(prodName);
+    setTimeout(() => {
+      const el = document.getElementById('product-usage-query-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 50);
+  };
   
   // Account filtering states
   const [isCustomAccountMode, setIsCustomAccountMode] = useState<boolean>(false);
@@ -1264,7 +1277,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* 功能 1: 歷史用量/費用與預估成長 (12 / 24 / 36 個月) */}
             <button
               type="button"
@@ -1307,7 +1320,28 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
               </p>
             </button>
 
-            {/* 功能 3: AWS Region & AZ 區域與可用區分析 */}
+            {/* 功能 3: RI/SP 分析與建議 */}
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('risp_recommendation')}
+              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                activeSubTab === 'risp_recommendation'
+                  ? 'bg-cyan-600/20 border-cyan-500 ring-2 ring-cyan-500/50 shadow-md text-white'
+                  : 'bg-gray-800/70 border-gray-700 hover:bg-gray-750 text-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <span className="text-lg">🎯</span>
+                <span className={activeSubTab === 'risp_recommendation' ? 'text-cyan-300' : 'text-gray-200'}>
+                  RI/SP 分析與建議
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                全帳號 RI/SP vs. EDP 方案決策評估、4 種方案對比、試算明細與 Excel 匯出
+              </p>
+            </button>
+
+            {/* 功能 4: AWS Region & AZ 區域與可用區分析 */}
             <button
               type="button"
               onClick={() => setActiveSubTab('region_az')}
@@ -1343,7 +1377,20 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
         />
       )}
 
-      {/* 視圖 3: AWS Region & AZ 區域與可用區分析 (Region & AZ Analysis) */}
+      {/* 視圖 3: RI/SP 分析與建議 (RI/SP vs EDP Recommendation) */}
+      {activeSubTab === 'risp_recommendation' && (
+        <RiSpAnalysisSection
+          data={filteredData}
+          months={months}
+          selectedMonth={selectedMonth}
+          setSelectedMonth={setSelectedMonth}
+          analysisMode={analysisMode}
+          setAnalysisMode={setAnalysisMode}
+          accountFilterSummaryText={accountFilterSummaryText}
+        />
+      )}
+
+      {/* 視圖 4: AWS Region & AZ 區域與可用區分析 (Region & AZ Analysis) */}
       {activeSubTab === 'region_az' && (
         <RegionAzAnalysisSection
           data={filteredData}
@@ -1560,9 +1607,22 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       <div className="text-xs font-bold text-blue-300 mb-2">既有(R) 固本主要服務明細：</div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                         {rgtAnalysis.categories[0]?.services?.slice(0, 9).map((srv, idx) => (
-                          <div key={idx} className="bg-gray-800 p-2 rounded border border-gray-700 flex justify-between">
-                            <span className="text-gray-300 truncate pr-2" title={srv.productName}>{srv.productName}</span>
-                            <span className="text-blue-300 font-mono font-bold">${formatNumber(srv.cost)}</span>
+                          <div key={idx} className="bg-gray-800 p-2 rounded border border-gray-700 flex justify-between items-center group">
+                            <span className="text-gray-300 truncate pr-2 text-xs" title={srv.productName}>{srv.productName}</span>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <span className="text-blue-300 font-mono font-bold text-xs">${formatNumber(srv.cost)}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleJumpToProductQuery(srv.productName);
+                                }}
+                                className="text-[10px] text-blue-300 hover:text-white bg-blue-900/50 hover:bg-blue-600 px-1.5 py-0.5 rounded border border-blue-500/40 cursor-pointer transition-colors"
+                                title="查詢此服務 10 欄位使用明細"
+                              >
+                                🔍
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1597,9 +1657,22 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                         {rgtAnalysis.categories[1]?.services && rgtAnalysis.categories[1].services.length > 0 ? (
                           rgtAnalysis.categories[1].services.slice(0, 9).map((srv, idx) => (
-                            <div key={idx} className="bg-gray-800 p-2 rounded border border-gray-700 flex justify-between">
-                              <span className="text-gray-300 truncate pr-2" title={srv.productName}>{srv.productName}</span>
-                              <span className="text-emerald-300 font-mono font-bold">${formatNumber(srv.cost)}</span>
+                            <div key={idx} className="bg-gray-800 p-2 rounded border border-gray-700 flex justify-between items-center group">
+                              <span className="text-gray-300 truncate pr-2 text-xs" title={srv.productName}>{srv.productName}</span>
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <span className="text-emerald-300 font-mono font-bold text-xs">${formatNumber(srv.cost)}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleJumpToProductQuery(srv.productName);
+                                  }}
+                                  className="text-[10px] text-emerald-300 hover:text-white bg-emerald-900/50 hover:bg-emerald-600 px-1.5 py-0.5 rounded border border-emerald-500/40 cursor-pointer transition-colors"
+                                  title="查詢此服務 10 欄位使用明細"
+                                >
+                                  🔍
+                                </button>
+                              </div>
                             </div>
                           ))
                         ) : (
@@ -1649,9 +1722,22 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                             <div className="space-y-1 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                               {sub.services.length > 0 ? (
                                 sub.services.map((srv, sIdx) => (
-                                  <div key={sIdx} className="flex justify-between text-xs bg-gray-800/80 p-1.5 rounded border border-gray-700/60">
-                                    <span className="text-gray-300">{srv.productName}</span>
-                                    <span className="text-purple-300 font-mono font-bold">${formatNumber(srv.cost)}</span>
+                                  <div key={sIdx} className="flex justify-between items-center text-xs bg-gray-800/80 p-1.5 rounded border border-gray-700/60">
+                                    <span className="text-gray-300 truncate pr-2">{srv.productName}</span>
+                                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                                      <span className="text-purple-300 font-mono font-bold">${formatNumber(srv.cost)}</span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleJumpToProductQuery(srv.productName);
+                                        }}
+                                        className="text-[10px] text-purple-300 hover:text-white bg-purple-900/50 hover:bg-purple-600 px-1.5 py-0.5 rounded border border-purple-500/40 cursor-pointer transition-colors"
+                                        title="查詢此服務 10 欄位使用明細"
+                                      >
+                                        🔍
+                                      </button>
+                                    </div>
                                   </div>
                                 ))
                               ) : (
@@ -1950,7 +2036,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                         <span className="font-semibold text-white text-sm">{srv.productName}</span>
                                       </div>
                                       
-                                      <div className="flex items-center space-x-4 ml-7 sm:ml-0">
+                                      <div className="flex items-center space-x-3 ml-7 sm:ml-0">
                                         <div className="text-xs text-gray-400">
                                           佔分類: <span className="font-mono font-medium text-gray-200">{srv.percentageOfCategory.toFixed(1)}%</span>
                                         </div>
@@ -1960,6 +2046,18 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                         <div className="font-mono font-bold text-sm text-blue-400 min-w-[90px] text-right">
                                           ${formatNumber(srv.cost)}
                                         </div>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleJumpToProductQuery(srv.productName);
+                                          }}
+                                          className="bg-blue-600/80 hover:bg-blue-600 text-white font-medium px-2 py-1 rounded text-xs transition-colors flex items-center gap-1 shadow cursor-pointer whitespace-nowrap"
+                                          title="查詢此產品 10 欄位使用明細"
+                                        >
+                                          <span>🔍</span>
+                                          <span>查詢明細</span>
+                                        </button>
                                       </div>
                                     </div>
                                   ))}
@@ -2026,6 +2124,24 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                     </Bar>
                 </BarChart>
             </ResponsiveContainer>
+        </div>
+        <div className="mt-4 pt-3 border-t border-gray-700/60 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-gray-400 font-semibold flex items-center gap-1">
+            <span>🔍</span>
+            <span>點選快速查詢 Top 服務明細:</span>
+          </span>
+          {top10ChartData.map((item) => (
+            <button
+              key={item.name}
+              type="button"
+              onClick={() => handleJumpToProductQuery(item.name)}
+              className="text-xs px-2.5 py-1 rounded-lg bg-gray-750 hover:bg-blue-600 text-gray-200 hover:text-white border border-gray-600 transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+              title={`查詢 ${item.name} 使用狀況明細`}
+            >
+              <span className="font-medium truncate max-w-[150px]">{item.name}</span>
+              <span className="text-[10px] text-gray-400 font-mono">(${formatNumber(item.cost)})</span>
+            </button>
+          ))}
         </div>
       </Card>
 
@@ -2097,6 +2213,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                             {analysisMode === 'monthly' ? '本月總費用' : '全期間總費用'} (USD) <span className={sortConfig.key === 'totalCost' ? 'text-blue-400' : 'text-gray-500'}>{getSortIcon('totalCost')}</span>
                         </th>
                         <th scope="col" className="px-6 py-3 text-center">佔比</th>
+                        <th scope="col" className="px-6 py-3 text-center">明細查詢</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2139,10 +2256,40 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                                             <span className="text-xs w-12 text-right font-mono">{percentage.toFixed(1)}%</span>
                                         </div>
                                     </td>
+                                    <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleJumpToProductQuery(product.productName)}
+                                        className="bg-blue-600/80 hover:bg-blue-600 text-white font-medium px-2.5 py-1 rounded-lg text-xs transition-colors shadow flex items-center gap-1 mx-auto cursor-pointer whitespace-nowrap"
+                                        title="查詢此產品 10 欄位使用明細"
+                                      >
+                                        <span>🔍</span>
+                                        <span>查詢明細</span>
+                                      </button>
+                                    </td>
                                 </tr>
                                 {isExpanded && (
                                     <tr className="bg-gray-900">
-                                        <td colSpan={4} className="p-6">
+                                        <td colSpan={5} className="p-6">
+                                            {/* 快速直達完整 10 欄位明細查詢的 Callout 橫幅 */}
+                                            <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-gradient-to-r from-blue-950/70 to-indigo-950/70 border border-blue-500/50 rounded-xl p-3.5 shadow-sm">
+                                                <div className="text-xs text-blue-200">
+                                                    <strong className="text-white font-bold text-sm block mb-0.5">【{product.productName}】產品使用狀況與計費明細查詢</strong>
+                                                    <span>提供原始資料 10 欄位紀錄：分類, Account ID, Account Name, Product Name, Usage Type, Item Description, Unit Price (USD), Usages, Total Cost (USD), Month</span>
+                                                </div>
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleJumpToProductQuery(product.productName);
+                                                  }}
+                                                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1.5 px-3.5 rounded-lg text-xs transition-all shadow-md flex items-center gap-1.5 whitespace-nowrap cursor-pointer hover:scale-105"
+                                                >
+                                                  <span>🔍</span>
+                                                  <span>開啟產品使用狀況查詢</span>
+                                                </button>
+                                            </div>
+
                                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                                 {/* 帳號分佈 */}
                                                 <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
@@ -2212,7 +2359,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                       })
                     ) : (
                       <tr>
-                        <td colSpan={4} className="py-8 text-center text-gray-500 text-sm">
+                        <td colSpan={5} className="py-8 text-center text-gray-500 text-sm">
                           在目前的篩選條件下，無任何服務資料
                         </td>
                       </tr>
@@ -2222,6 +2369,19 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
           </div>
         </div>
       </Card>
+
+      {/* ========================================================================= */}
+      {/* 5. 產品使用狀況查詢 (包含 10 欄位完整明細) - Product Usage Detail Query */}
+      {/* ========================================================================= */}
+      <ProductUsageQuerySection
+        data={filteredData}
+        months={months}
+        selectedMonth={selectedMonth}
+        analysisMode={analysisMode}
+        selectedProductName={selectedQueryProduct}
+        onSelectProductName={setSelectedQueryProduct}
+        accountFilterSummaryText={accountFilterSummaryText}
+      />
         </div>
       )}
       
