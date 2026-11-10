@@ -193,20 +193,99 @@ const EXACT_CATEGORY_MAP: Record<string, ServiceCategory> = {
   'ComputeSavingsPlans': 'Compute',
 
   // === DB ===
-  'AmazonAthena': 'DB',
-  'AmazonDocDB': 'DB',
-  'AmazonDynamoDB': 'DB',
-  'AmazonElastiCache': 'DB',
-  'AmazonES': 'DB',
+  // 1. Amazon Relational Database Service (RDS) & Aurora
   'AmazonRDS': 'DB',
+  'Amazon RDS': 'DB',
+  'Amazon Relational Database Service': 'DB',
+  'Amazon Relational Database Service (RDS)': 'DB',
   'AmazonRDSOCPULicenseFees': 'DB',
+  'Amazon RDS Custom': 'DB',
+  'AmazonRDSCustom': 'DB',
+  'Amazon RDS Custom for Oracle': 'DB',
+  'Amazon RDS Custom for SQL Server': 'DB',
+  'Amazon Aurora': 'DB',
+  'AmazonAurora': 'DB',
+  'Amazon Aurora DSQL': 'DB',
+  'AmazonAuroraDSQL': 'DB',
+  'Aurora DSQL': 'DB',
+  'Aurora PostgreSQL': 'DB',
+  'Aurora MySQL': 'DB',
+  'Amazon RDS for MariaDB': 'DB',
+  'Amazon RDS for MySQL': 'DB',
+  'Amazon RDS for PostgreSQL': 'DB',
+  'Amazon RDS for Oracle': 'DB',
+  'Amazon RDS for SQL Server': 'DB',
+  'Amazon RDS for Db2': 'DB',
+  'Amazon RDS for DB2': 'DB',
+  'Amazon RDS Local Zones': 'DB',
+  'AmazonRDSLocalZones': 'DB',
+
+  // 2. AWS Database Migration Service (DMS)
+  'AWSDatabaseMigrationSvc': 'DB',
+  'AWSDatabaseMigrationService': 'DB',
+  'AWS Database Migration Service': 'DB',
+  'Database Migration Service': 'DB',
+  'Amazon Database Migration Service': 'DB',
+  'AWSDMS': 'DB',
+  'AWS DMS': 'DB',
+  'Amazon DMS': 'DB',
+
+  // 3. Amazon DocumentDB (with MongoDB compatibility)
+  'AmazonDocDB': 'DB',
+  'Amazon DocumentDB': 'DB',
+  'Amazon DocumentDB (with MongoDB compatibility)': 'DB',
+  'Amazon DocumentDB (with MongoDB Compatibility)': 'DB',
+  'AmazonDocumentDB': 'DB',
+  'DocumentDB': 'DB',
+
+  // 4. Amazon DynamoDB
+  'AmazonDynamoDB': 'DB',
+  'Amazon DynamoDB': 'DB',
+  'DynamoDB': 'DB',
+  'AmazonDAX': 'DB',
+  'Amazon DynamoDB Accelerator (DAX)': 'DB',
+  'Amazon DynamoDB Accelerator': 'DB',
+
+  // 5. Amazon ElastiCache
+  'AmazonElastiCache': 'DB',
+  'Amazon ElastiCache': 'DB',
+  'ElastiCache': 'DB',
+  'Amazon ElastiCache for Redis': 'DB',
+  'Amazon ElastiCache for Memcached': 'DB',
+  'Amazon ElastiCache Serverless': 'DB',
+
+  // 6. Amazon MemoryDB for Redis
+  'AmazonMemoryDB': 'DB',
+  'Amazon MemoryDB': 'DB',
+  'Amazon MemoryDB for Redis': 'DB',
+  'AmazonMemoryDBforRedis': 'DB',
+  'Amazon MemoryDB for Valkey': 'DB',
+  'MemoryDB': 'DB',
+
+  // 7. Amazon Neptune
+  'AmazonNeptune': 'DB',
+  'Amazon Neptune': 'DB',
+  'Amazon Neptune Database': 'DB',
+  'Amazon Neptune Analytics': 'DB',
+  'Amazon Neptune Serverless': 'DB',
+  'Neptune': 'DB',
+
+  // 8. Amazon TimeStream
+  'AmazonTimestream': 'DB',
+  'Amazon TimeStream': 'DB',
+  'Amazon Timestream': 'DB',
+  'Amazon Timestream for LiveAnalytics': 'DB',
+  'Amazon Timestream for InfluxDB': 'DB',
+  'Timestream': 'DB',
+  'TimeStream': 'DB',
+
+  // Other DB services
+  'AmazonAthena': 'DB',
+  'AmazonES': 'DB',
+  'AmazonOpenSearchService': 'DB',
   'AmazonRedshift': 'DB',
   'AmazonSimpleDB': 'DB',
   'AWS Marketplace-MongoDB Atlas (pay-as-you-go)': 'DB',
-  'AWSDatabaseMigrationSvc': 'DB',
-  'AmazonOpenSearchService': 'DB',
-  'AmazonNeptune': 'DB',
-  'AmazonMemoryDB': 'DB',
 
   // === Network ===
   'AmazonApiGateway': 'Network',
@@ -353,7 +432,71 @@ export const getServiceCategory = (
     return 'AI';
   }
 
-  // 4. Resilience (韌性) Patterns
+  // 4. DB (Database) Patterns
+  // Explicitly covers the 8 core database services requested:
+  // 1. Amazon Relational Database Service (RDS) & Aurora
+  // 2. AWS Database Migration Service (DMS)
+  // 3. Amazon DocumentDB (with MongoDB compatibility)
+  // 4. Amazon DynamoDB
+  // 5. Amazon ElastiCache
+  // 6. Amazon MemoryDB for Redis
+  // 7. Amazon Neptune
+  // 8. Amazon TimeStream (Timestream)
+  // + Redshift, Athena, SimpleDB, OpenSearch/ES, MongoDB Atlas
+  if (
+    // 1. RDS & Aurora (MariaDB, MySQL, PostgreSQL, Aurora DSQL, Oracle, SQL Server, Db2, RDS Custom, Local Zones)
+    compactName.includes('rds') ||
+    compactName.includes('aurora') ||
+    compactName.includes('relationaldatabase') ||
+    compactFull.includes('amazonrds') ||
+    compactFull.includes('relationaldatabaseservice') ||
+    compactFull.includes('auroradsql') ||
+    compactFull.includes('rdscustom') ||
+    /\b(rds|aurora)\b/i.test(fullText) ||
+    // 2. AWS Database Migration Service (DMS)
+    compactName.includes('databasemigrationsvc') ||
+    compactName.includes('databasemigration') ||
+    compactName.includes('dms') ||
+    compactFull.includes('databasemigration') ||
+    /\b(dms)\b/i.test(productName) ||
+    // 3. Amazon DocumentDB
+    compactName.includes('docdb') ||
+    compactName.includes('documentdb') ||
+    compactFull.includes('documentdb') ||
+    // 4. Amazon DynamoDB & DAX
+    compactName.includes('dynamodb') ||
+    compactName.includes('amazondax') ||
+    compactFull.includes('dynamodb') ||
+    // 5. Amazon ElastiCache
+    compactName.includes('elasticache') ||
+    compactFull.includes('elasticache') ||
+    // 6. Amazon MemoryDB for Redis
+    compactName.includes('memorydb') ||
+    compactFull.includes('memorydb') ||
+    // 7. Amazon Neptune
+    compactName.includes('neptune') ||
+    compactFull.includes('neptune') ||
+    // 8. Amazon TimeStream / Timestream
+    compactName.includes('timestream') ||
+    compactFull.includes('timestream') ||
+    // Other DBs
+    compactName.includes('redshift') ||
+    compactFull.includes('redshift') ||
+    compactName.includes('athena') ||
+    compactFull.includes('athena') ||
+    compactName.includes('simpledb') ||
+    compactFull.includes('simpledb') ||
+    compactName.includes('opensearch') ||
+    compactFull.includes('opensearch') ||
+    compactName.includes('amazones') ||
+    compactFull.includes('amazones') ||
+    compactName.includes('mongodbatlas') ||
+    compactFull.includes('mongodbatlas')
+  ) {
+    return 'DB';
+  }
+
+  // 5. Resilience (韌性) Patterns
   if (
     compactFull.includes('cloudwatch') ||
     compactFull.includes('grafana') ||
@@ -376,7 +519,7 @@ export const getServiceCategory = (
     return '韌性';
   }
 
-  // 5. Security Patterns
+  // 6. Security Patterns
   if (
     compactFull.includes('guardduty') ||
     compactFull.includes('inspector') ||
@@ -398,25 +541,6 @@ export const getServiceCategory = (
     compactFull.includes('shield')
   ) {
     return 'Security';
-  }
-
-  // 6. DB Patterns
-  if (
-    compactFull.includes('rds') ||
-    compactFull.includes('dynamodb') ||
-    compactFull.includes('elasticache') ||
-    compactFull.includes('amazones') ||
-    compactFull.includes('opensearch') ||
-    compactFull.includes('redshift') ||
-    compactFull.includes('athena') ||
-    compactFull.includes('docdb') ||
-    compactFull.includes('simpledb') ||
-    compactFull.includes('mongodbatlas') ||
-    compactFull.includes('databasemigrationsvc') ||
-    compactFull.includes('dms') ||
-    compactFull.includes('neptune')
-  ) {
-    return 'DB';
   }
 
   // 7. Storage Patterns
