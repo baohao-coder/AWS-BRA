@@ -30,11 +30,50 @@ export const DEFAULT_EC2_RI_RATES: RiSpPlanRates = {
   threeYearAllUpfront: 0.72, // ~72% EC2 Instance SP / RI
 };
 
+export type RiSpPlanKey = '1y_no' | '1y_all' | '3y_no' | '3y_all';
+
+export const PLAN_NAMES: Record<RiSpPlanKey | 'edp' | 'none', string> = {
+  '1y_no': 'RI/SP 1年無預付',
+  '1y_all': 'RI/SP 1年全預付',
+  '3y_no': 'RI/SP 3年無預付',
+  '3y_all': 'RI/SP 3年全預付',
+  'edp': 'EDP 75折',
+  'none': '未購買 RI/SP'
+};
+
 export interface ServiceItemCost {
   productName: string;
   cost: number;
   isEligible: boolean;
   categoryName?: string;
+}
+
+export type AdjustmentActionType = 
+  | 'UPGRADE_3Y'       // 建議升級至 3 年全預付
+  | 'EXIT_TO_EDP'      // 建議到期轉 EDP 75折，不再續約 RI/SP
+  | 'EXPAND_COVERAGE'  // 建議追加承諾量提高覆蓋率
+  | 'KEEP_CURRENT'     // 現況配置良好，建議維持
+  | 'NEW_PURCHASE'     // 尚未購買，建議新購 RI/SP
+  | 'KEEP_EDP';        // 尚未購買，維持 EDP 75折最划算
+
+export interface ExistingRiSpDiagnosis {
+  hasPurchased: boolean;
+  isAutoDetected: boolean;
+  detectedFeatures: string[];
+  detectedFee: number;
+  currentPlanKey: RiSpPlanKey | 'none';
+  currentPlanName: string;
+  currentCost: number; // Spend under current configuration
+  
+  // Adjustment Advice
+  needsAdjustment: boolean;
+  adjustmentAction: AdjustmentActionType;
+  badgeLabel: string;
+  badgeColorClass: string;
+  summaryText: string;
+  detailReason: string;
+  actionSteps: string[];
+  potentialMonthlySavingsVsCurrent: number; // Potential savings compared to current cost
 }
 
 export interface AccountRiSpEvaluation {
@@ -45,6 +84,9 @@ export interface AccountRiSpEvaluation {
   nonEligibleCost: number; // Other spend (Storage, Data Transfer, AI, etc.)
   eligibleRatio: number; // % of spend that is eligible
   
+  // Existing RI/SP status & adjustment recommendation
+  existingDiagnosis: ExistingRiSpDiagnosis;
+
   // Cost under EDP (75折 on entire account)
   costEdp: number;
   savingsEdp: number;
@@ -61,7 +103,7 @@ export interface AccountRiSpEvaluation {
   savings3YNoUpfront: number;
   savings3YAllUpfront: number;
 
-  // Net difference vs EDP (costEdp - costPlan: positive means cheaper than EDP, negative means more expensive than EDP)
+  // Net difference vs EDP (costEdp - costPlan: positive means cheaper than EDP)
   netDiff1YNoUpfront: number;
   netDiff1YAllUpfront: number;
   netDiff3YNoUpfront: number;
@@ -86,6 +128,11 @@ export interface AccountRiSpEvaluation {
   best3YearCost: number;
 
   services: ServiceItemCost[];
+}
+
+interface AccountOverride {
+  hasPurchased: boolean;
+  planKey: RiSpPlanKey;
 }
 
 interface RiSpAnalysisSectionProps {
@@ -144,6 +191,83 @@ export const checkServiceEligibleForRiSp = (productName: string, includeDb: bool
   return false;
 };
 
+// Detect whether an account's services/details show evidence of active RI or Savings Plans
+const detectAccountRiSpFeatures = (accountServices: { productName: string; totalCost: number; details?: any[] }[]): {
+  hasPurchased: boolean;
+  features: string[];
+  detectedFee: number;
+  inferredPlan: RiSpPlanKey;
+} => {
+  const features: string[] = [];
+  let detectedFee = 0;
+  let inferredPlan: RiSpPlanKey = '1y_no';
+
+  accountServices.forEach(srv => {
+    const pName = (srv.productName || '').toLowerCase();
+    
+    // Check product names
+    if (
+      pName.includes('savings plan') || 
+      pName.includes('savingsplans') || 
+      pName.includes('compute savings') || 
+      pName.includes('ec2 instance savings')
+    ) {
+      features.push(`產品含【${srv.productName}】`);
+      detectedFee += Math.abs(srv.totalCost || 0);
+    } else if (pName.includes('reserved instance') || pName.includes('heavyusage')) {
+      features.push(`產品含【${srv.productName}】預留項目`);
+      detectedFee += Math.abs(srv.totalCost || 0);
+    }
+
+    // Check detail lines if present
+    if (srv.details && Array.isArray(srv.details)) {
+      srv.details.forEach(det => {
+        const uType = (det.usageType || '').toLowerCase();
+        const desc = (det.itemDescription || '').toLowerCase();
+
+        if (
+          uType.includes('savingsplan') || 
+          uType.includes('savings plan') || 
+          desc.includes('savings plan') ||
+          uType.includes('coveredusage')
+        ) {
+          if (!features.some(f => f.includes('Savings Plan 抵扣'))) {
+            features.push('計費明細含 Savings Plan 抵扣/承諾紀錄');
+          }
+          if (det.totalCost < 0) {
+            detectedFee += Math.abs(det.totalCost);
+          }
+        }
+
+        if (
+          uType.includes('heavyusage') || 
+          desc.includes('reserved instance') || 
+          desc.includes('ri fee') || 
+          uType.includes('reservation')
+        ) {
+          if (!features.some(f => f.includes('Reserved Instance 訂閱'))) {
+            features.push('計費明細含 Reserved Instance 訂閱紀錄');
+          }
+        }
+
+        // Infer plan duration from line item text
+        if (desc.includes('3 yr') || desc.includes('3 year') || desc.includes('3年')) {
+          inferredPlan = (desc.includes('all upfront') || desc.includes('全預付')) ? '3y_all' : '3y_no';
+        } else if (desc.includes('all upfront') || desc.includes('全預付')) {
+          inferredPlan = '1y_all';
+        }
+      });
+    }
+  });
+
+  return {
+    hasPurchased: features.length > 0,
+    features,
+    detectedFee,
+    inferredPlan
+  };
+};
+
 const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
   data,
   months,
@@ -158,10 +282,13 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
   const [activePreset, setActivePreset] = useState<'compute_sp' | 'ec2_ri' | 'custom'>('compute_sp');
   const [includeDbInEligible, setIncludeDbInEligible] = useState<boolean>(true);
   
+  // User overrides for account RI/SP status (allows manual adjustment & simulation)
+  const [accountOverrides, setAccountOverrides] = useState<Record<string, AccountOverride>>({});
+
   // Search and filter state for table
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [recommendationFilter, setRecommendationFilter] = useState<'ALL' | 'EDP' | 'RISP'>('ALL');
-  const [sortField, setSortField] = useState<'totalCost' | 'eligibleRatio' | 'bestSavings' | 'netDiffEdp' | 'accountName'>('totalCost');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PURCHASED_ALL' | 'PURCHASED_NEED_ADJUST' | 'PURCHASED_KEEP' | 'NOT_PURCHASED' | 'EDP' | 'RISP'>('ALL');
+  const [sortField, setSortField] = useState<'totalCost' | 'eligibleRatio' | 'bestSavings' | 'netDiffEdp' | 'accountName' | 'status'>('totalCost');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Selected account for deep-dive modal
@@ -185,13 +312,53 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
     }));
   };
 
-  // Perform RI/SP vs EDP Evaluation for all accounts based on current mode and rates
+  // Toggle account purchased status manually
+  const handleToggleAccountPurchased = (accountId: string, currentlyPurchased: boolean, defaultPlan: RiSpPlanKey = '1y_no') => {
+    setAccountOverrides(prev => ({
+      ...prev,
+      [accountId]: {
+        hasPurchased: !currentlyPurchased,
+        planKey: defaultPlan
+      }
+    }));
+  };
+
+  // Change account plan manually
+  const handleChangeAccountPlan = (accountId: string, planKey: RiSpPlanKey) => {
+    setAccountOverrides(prev => ({
+      ...prev,
+      [accountId]: {
+        hasPurchased: true,
+        planKey
+      }
+    }));
+  };
+
+  // Reset all overrides back to auto-detection
+  const handleResetOverrides = () => {
+    setAccountOverrides({});
+  };
+
+  // Batch simulate: set all to purchased 1Y No-Upfront
+  const handleBatchSetAllPurchased = (planKey: RiSpPlanKey = '1y_no') => {
+    const newOverrides: Record<string, AccountOverride> = {};
+    evaluationResults.forEach(acc => {
+      newOverrides[acc.accountId] = {
+        hasPurchased: true,
+        planKey
+      };
+    });
+    setAccountOverrides(newOverrides);
+  };
+
+  // Perform RI/SP vs EDP Evaluation for all accounts based on current mode, rates, and existing status
   const evaluationResults = useMemo(() => {
     // 1. Gather all accounts depending on analysisMode
     const accAggregateMap = new Map<string, {
       accountId: string;
       accountName: string;
       servicesMap: Map<string, number>;
+      rawServicesList: { productName: string; totalCost: number; details?: any[] }[];
       totalAmount: number;
     }>();
 
@@ -206,6 +373,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
             accountId: acc.accountId,
             accountName: acc.accountName || acc.accountId,
             servicesMap: new Map<string, number>(),
+            rawServicesList: [],
             totalAmount: 0
           });
         }
@@ -219,6 +387,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
               const current = record.servicesMap.get(srv.productName) || 0;
               record.servicesMap.set(srv.productName, current + cost);
               record.totalAmount += cost;
+              record.rawServicesList.push(srv);
             }
           });
         } else if (typeof acc.totalAmount === 'number' && acc.totalAmount > 0) {
@@ -227,7 +396,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       });
     });
 
-    // 2. Evaluate each account under the pricing rules
+    // 2. Evaluate each account under pricing rules & existing contract diagnosis
     const evals: AccountRiSpEvaluation[] = [];
 
     accAggregateMap.forEach(record => {
@@ -277,7 +446,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       const netDiff3YNoUpfront = costEdp - cost3YNoUpfront;
       const netDiff3YAllUpfront = costEdp - cost3YAllUpfront;
 
-      // Candidate options for best recommendation
+      // Candidate options for theoretical best plan
       const candidatePlans: {
         key: 'edp' | '1y_no' | '1y_all' | '3y_no' | '3y_all';
         name: string;
@@ -308,14 +477,143 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
 
       const bestSavingsVsOnDemand = totalCost - best.cost;
       const bestSavingsRateVsOnDemand = totalCost > 0 ? (bestSavingsVsOnDemand / totalCost) * 100 : 0;
-      const netSavingsVsEdp = costEdp - best.cost; // > 0 means better than EDP
+      const netSavingsVsEdp = costEdp - best.cost;
 
-      // Generate human-friendly decision rationale
+      // Theoretical recommendation reason
       let recommendationReason = '';
       if (best.type === 'EDP') {
         recommendationReason = `非適用服務佔比達 ${(100 - eligibleRatio).toFixed(1)}%。若購買 RI/SP，非適用服務將失去 25% EDP 折扣而需付全額原價，抵扣後全帳號採 EDP 75折更省。`;
       } else {
         recommendationReason = `適用服務佔比達 ${eligibleRatio.toFixed(1)}%，該方案高折扣率節省的金額遠超非適用服務恢復原價之差額，比走 EDP 可再省 $${formatNumber(netSavingsVsEdp)}。`;
+      }
+
+      // =========================================================================
+      // 3. 檢查該帳號是否已經有買 RI/SP，並進行具體調整分析建議
+      // =========================================================================
+      const autoDetection = detectAccountRiSpFeatures(record.rawServicesList);
+      const manualOverride = accountOverrides[record.accountId];
+
+      const hasPurchased = manualOverride !== undefined ? manualOverride.hasPurchased : autoDetection.hasPurchased;
+      const isAutoDetected = manualOverride === undefined;
+      const currentPlanKey: RiSpPlanKey | 'none' = hasPurchased 
+        ? (manualOverride?.planKey || autoDetection.inferredPlan || '1y_no')
+        : 'none';
+      const currentPlanName = hasPurchased ? PLAN_NAMES[currentPlanKey] : '未購買 (全帳號採 EDP 75折)';
+
+      // Calculate current actual spend
+      let currentCost = totalCost;
+      if (hasPurchased) {
+        if (currentPlanKey === '1y_no') currentCost = cost1YNoUpfront;
+        else if (currentPlanKey === '1y_all') currentCost = cost1YAllUpfront;
+        else if (currentPlanKey === '3y_no') currentCost = cost3YNoUpfront;
+        else if (currentPlanKey === '3y_all') currentCost = cost3YAllUpfront;
+        else currentCost = cost1YNoUpfront;
+      } else {
+        currentCost = costEdp; // Not purchased -> pay EDP
+      }
+
+      // Determine Adjustment Action & Rationale
+      let needsAdjustment = false;
+      let adjustmentAction: AdjustmentActionType = 'KEEP_CURRENT';
+      let badgeLabel = '✅ 維持現狀';
+      let badgeColorClass = 'bg-emerald-900/40 text-emerald-300 border-emerald-500/50';
+      let summaryText = '現行方案配置健康，與工作負載高度匹配，建議維持現狀。';
+      let detailReason = '';
+      let actionSteps: string[] = [];
+      let potentialMonthlySavingsVsCurrent = 0;
+
+      if (hasPurchased) {
+        // --- 帳號【已有購買 RI/SP】的情境診斷 ---
+        
+        // 情況 1: 買了 RI/SP 反而比走 EDP 75折貴！(因為非適用服務被懲罰支付 100% 原價)
+        const lossVsEdp = currentCost - costEdp;
+        if (lossVsEdp > 1.0) {
+          needsAdjustment = true;
+          adjustmentAction = 'EXIT_TO_EDP';
+          badgeLabel = '⚠️ 建議到期轉 EDP 75折';
+          badgeColorClass = 'bg-rose-900/50 text-rose-300 border-rose-500/60 animate-pulse';
+          potentialMonthlySavingsVsCurrent = lossVsEdp;
+          summaryText = `非適用服務龐大(佔 ${(100 - eligibleRatio).toFixed(1)}%)，目前走 RI/SP 每月比 EDP 多花 $${formatNumber(lossVsEdp)}，建議合約到期後停止續約改走全帳號 EDP 75折。`;
+          detailReason = `【退場調整診斷】此帳號目前持有 ${currentPlanName}。由於非適用服務（如 S3、CloudFront、資料傳輸等）費用高達 $${formatNumber(nonEligibleCost)} USD，佔全帳號比重 ${(100 - eligibleRatio).toFixed(1)}%。根據計費規則，購買 RI/SP 後該些非適用服務無法享有 EDP 75折（需付 100% 原價），導致 RI/SP 省下的運算折扣不足以彌補非適用服務的原價差額，每月整體多付了 $${formatNumber(lossVsEdp)} USD。`;
+          actionSteps = [
+            `1. 進入 AWS Cost Management 盤點現有 RI / Savings Plans 之到期日 (Expiration Date)。`,
+            `2. 關閉或設定到期後「不自動續約 (Do not renew)」。`,
+            `3. 合約到期日起，全帳號所有服務自動回歸享有 EDP 75折優惠，預估每月立即節省 $${formatNumber(lossVsEdp)} USD。`
+          ];
+        } 
+        // 情況 2: 目前持有 1年期或無預付，但負載穩定且 3年全預付能帶來巨大效益
+        else if (best.key === '3y_all' && currentPlanKey !== '3y_all' && (currentCost - cost3YAllUpfront) > 5.0) {
+          const upgradeSavings = currentCost - cost3YAllUpfront;
+          needsAdjustment = true;
+          adjustmentAction = 'UPGRADE_3Y';
+          badgeLabel = '💡 建議升級 3年全預付';
+          badgeColorClass = 'bg-cyan-900/50 text-cyan-300 border-cyan-500/60';
+          potentialMonthlySavingsVsCurrent = upgradeSavings;
+          summaryText = `運算負載佔比達 ${eligibleRatio.toFixed(1)}% 具高長期穩定度，建議現有方案到期後更換為【3年全預付】，每月可再額外淨省 $${formatNumber(upgradeSavings)}。`;
+          detailReason = `【期程升級診斷】此帳號目前持有 ${currentPlanName}，核心運算/資料庫月花費達 $${formatNumber(eligibleCost)} USD (佔比 ${eligibleRatio.toFixed(1)}%)。目前 1年期或無預付之平均折扣率僅約 ${(rates[currentPlanKey === '1y_all' ? 'oneYearAllUpfront' : currentPlanKey === '3y_no' ? 'threeYearNoUpfront' : 'oneYearNoUpfront'] * 100).toFixed(0)}%。若將合約期程拉長為 3 年並改為全預付，折扣率將提升至 ${(rates.threeYearAllUpfront * 100).toFixed(0)}%，每月可由現況再多省 $${formatNumber(upgradeSavings)} USD。`;
+          actionSteps = [
+            `1. 確認此帳號承載之業務系統為中長期核心基礎架構（未來 2~3 年持續運作）。`,
+            `2. 於目前 1 年期合約到期前 30 天，向財務申請 3 年全預付資本支出 (CapEx) 預算。`,
+            `3. 轉換購買 Compute Savings Plans 3年全預付，每月可再降低成本 $${formatNumber(upgradeSavings)} USD。`
+          ];
+        }
+        // 情況 3: 適用用量龐大但覆蓋率偏低
+        else if (eligibleCost > 1000 && autoDetection.detectedFee > 0 && (autoDetection.detectedFee / eligibleCost) < 0.6) {
+          needsAdjustment = true;
+          adjustmentAction = 'EXPAND_COVERAGE';
+          badgeLabel = '📈 建議加購提高覆蓋';
+          badgeColorClass = 'bg-blue-900/50 text-blue-300 border-blue-500/60';
+          potentialMonthlySavingsVsCurrent = (eligibleCost * 0.85 - autoDetection.detectedFee) * (rates.oneYearNoUpfront);
+          summaryText = `適用服務月花費達 $${formatNumber(eligibleCost)}，但現有承諾量覆蓋偏低，建議追加每小時承諾額度將覆蓋率推升至 80%~90%。`;
+          detailReason = `【承諾擴充診斷】該帳號已購 RI/SP，但現有承諾覆蓋率估算低於 60%，仍有大量運算負載以 On-Demand 原價溢流計費。建議適度追加承諾量，將覆蓋率提高至 85% 最佳甜蜜點。`;
+          actionSteps = [
+            `1. 開啟 AWS Cost Explorer 中的 Savings Plans Utilization & Coverage 報表。`,
+            `2. 檢視過去 30 天 On-Demand 運算基準線 (Baseline)。`,
+            `3. 追加每小時小額承諾量，將覆蓋率由現況提升至 85%，避免原價費用浪費。`
+          ];
+        }
+        // 情況 4: 現況已經最優或差異極小
+        else {
+          needsAdjustment = false;
+          adjustmentAction = 'KEEP_CURRENT';
+          badgeLabel = '✅ 維持現狀 (配置健康)';
+          badgeColorClass = 'bg-emerald-900/40 text-emerald-300 border-emerald-500/50';
+          potentialMonthlySavingsVsCurrent = 0;
+          summaryText = `現行 ${currentPlanName} 方案與用量模式契合度優良，比走 EDP 方案每月多省 $${formatNumber(Math.max(0, costEdp - currentCost))}，建議維持現行配置。`;
+          detailReason = `【維持現況診斷】該帳號已購之 ${currentPlanName} 運作良好，適用運算佔比適中 (${eligibleRatio.toFixed(1)}%)，且比全帳號 EDP 方案更具經濟優勢。現階段無須調整，建議持續於每季監控負載波動即可。`;
+          actionSteps = [
+            `1. 維持目前方案與續約週期。`,
+            `2. 建立 CloudWatch 成本預算警報，當用量波動超過 15% 時再重新評估。`
+          ];
+        }
+      } else {
+        // --- 帳號【尚未購買 RI/SP】的情境診斷 ---
+        if (best.type === 'RISP' && netSavingsVsEdp > 5.0) {
+          needsAdjustment = true;
+          adjustmentAction = 'NEW_PURCHASE';
+          badgeLabel = '🚀 建議新購 RI/SP';
+          badgeColorClass = 'bg-indigo-900/50 text-indigo-300 border-indigo-500/60';
+          potentialMonthlySavingsVsCurrent = netSavingsVsEdp;
+          summaryText = `尚未購買 RI/SP，核心適用運算高達 ${eligibleRatio.toFixed(1)}%，建議新購【${best.name}】，可比目前 EDP 方案再多省 $${formatNumber(netSavingsVsEdp)}。`;
+          detailReason = `【新購建議】目前尚未購買任何 RI/SP（享受 EDP 75折）。經精算，此帳號適用服務佔比達 ${eligibleRatio.toFixed(1)}% ($${formatNumber(eligibleCost)} USD)，購買【${best.name}】後，即便非適用服務恢復原價，整體全帳號支出仍比 EDP 75折每月再省 $${formatNumber(netSavingsVsEdp)} USD。`;
+          actionSteps = [
+            `1. 推薦優先採購方案：${best.name}。`,
+            `2. 預計每月比目前支出多節省 $${formatNumber(netSavingsVsEdp)} USD (年省約 $${formatNumber(netSavingsVsEdp * 12)} USD)。`,
+            `3. 評估採用 Compute Savings Plans 以維持靈活性。`
+          ];
+        } else {
+          needsAdjustment = false;
+          adjustmentAction = 'KEEP_EDP';
+          badgeLabel = '🛡️ 維持 EDP 75折';
+          badgeColorClass = 'bg-purple-900/40 text-purple-300 border-purple-500/50';
+          potentialMonthlySavingsVsCurrent = 0;
+          summaryText = `尚未購買 RI/SP，非適用服務佔比達 ${(100 - eligibleRatio).toFixed(1)}%，維持全帳號 EDP 75折最為划算，不需購買 RI/SP。`;
+          detailReason = `【維持 EDP 診斷】該帳號目前未買 RI/SP，由於非適用服務高達 $${formatNumber(nonEligibleCost)} USD (${(100 - eligibleRatio).toFixed(1)}%)，若購買 RI/SP 該些服務失去 EDP 75折後整體花費反而增加。因此維持現狀享受全帳號 EDP 75折為最優策略。`;
+          actionSteps = [
+            `1. 維持不購買 RI/SP 狀態。`,
+            `2. 確保帳號已綁定在公司 EDP 主約涵蓋範圍內享有全額 75 折。`
+          ];
+        }
       }
 
       evals.push({
@@ -325,6 +623,23 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
         eligibleCost,
         nonEligibleCost,
         eligibleRatio,
+        existingDiagnosis: {
+          hasPurchased,
+          isAutoDetected,
+          detectedFeatures: autoDetection.features,
+          detectedFee: autoDetection.detectedFee,
+          currentPlanKey,
+          currentPlanName,
+          currentCost,
+          needsAdjustment,
+          adjustmentAction,
+          badgeLabel,
+          badgeColorClass,
+          summaryText,
+          detailReason,
+          actionSteps,
+          potentialMonthlySavingsVsCurrent
+        },
         costEdp,
         savingsEdp,
         cost1YNoUpfront,
@@ -356,7 +671,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
     });
 
     return evals;
-  }, [data, selectedMonth, analysisMode, rates, includeDbInEligible]);
+  }, [data, selectedMonth, analysisMode, rates, includeDbInEligible, accountOverrides]);
 
   // Overall KPI aggregates across all evaluated accounts
   const summaryKpis = useMemo(() => {
@@ -365,8 +680,17 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
     let totalNonEligible = 0;
     let totalEdpCost = 0;
     let totalOptimalCost = 0;
-    let edpRecommendedCount = 0;
-    let rispRecommendedCount = 0;
+    let totalCurrentSpend = 0;
+    let totalPotentialAdjustmentSavings = 0;
+
+    let purchasedCount = 0;
+    let notPurchasedCount = 0;
+    let purchasedNeedAdjustCount = 0;
+    let purchasedKeepCount = 0;
+    let exitToEdpCount = 0;
+    let upgrade3YCount = 0;
+    let expandCoverageCount = 0;
+    let newPurchaseRispCount = 0;
 
     evaluationResults.forEach(item => {
       totalOnDemand += item.totalCost;
@@ -374,11 +698,22 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       totalNonEligible += item.nonEligibleCost;
       totalEdpCost += item.costEdp;
       totalOptimalCost += item.bestCost;
+      totalCurrentSpend += item.existingDiagnosis.currentCost;
+      totalPotentialAdjustmentSavings += item.existingDiagnosis.potentialMonthlySavingsVsCurrent;
 
-      if (item.recommendationType === 'EDP') {
-        edpRecommendedCount++;
+      if (item.existingDiagnosis.hasPurchased) {
+        purchasedCount++;
+        if (item.existingDiagnosis.needsAdjustment) {
+          purchasedNeedAdjustCount++;
+          if (item.existingDiagnosis.adjustmentAction === 'EXIT_TO_EDP') exitToEdpCount++;
+          else if (item.existingDiagnosis.adjustmentAction === 'UPGRADE_3Y') upgrade3YCount++;
+          else if (item.existingDiagnosis.adjustmentAction === 'EXPAND_COVERAGE') expandCoverageCount++;
+        } else {
+          purchasedKeepCount++;
+        }
       } else {
-        rispRecommendedCount++;
+        notPurchasedCount++;
+        if (item.existingDiagnosis.adjustmentAction === 'NEW_PURCHASE') newPurchaseRispCount++;
       }
     });
 
@@ -396,11 +731,19 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       avgEligibleRatio,
       totalEdpCost,
       totalOptimalCost,
+      totalCurrentSpend,
+      totalPotentialAdjustmentSavings,
       edpSavings,
       optimalSavingsVsOnDemand,
       optimalExtraSavingsVsEdp,
-      edpRecommendedCount,
-      rispRecommendedCount
+      purchasedCount,
+      notPurchasedCount,
+      purchasedNeedAdjustCount,
+      purchasedKeepCount,
+      exitToEdpCount,
+      upgrade3YCount,
+      expandCoverageCount,
+      newPurchaseRispCount
     };
   }, [evaluationResults]);
 
@@ -408,9 +751,19 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
   const displayedEvaluations = useMemo(() => {
     let list = [...evaluationResults];
 
-    // Filter by recommendation type
-    if (recommendationFilter !== 'ALL') {
-      list = list.filter(item => item.recommendationType === recommendationFilter);
+    // Filter by status filter
+    if (statusFilter === 'PURCHASED_ALL') {
+      list = list.filter(item => item.existingDiagnosis.hasPurchased);
+    } else if (statusFilter === 'PURCHASED_NEED_ADJUST') {
+      list = list.filter(item => item.existingDiagnosis.hasPurchased && item.existingDiagnosis.needsAdjustment);
+    } else if (statusFilter === 'PURCHASED_KEEP') {
+      list = list.filter(item => item.existingDiagnosis.hasPurchased && !item.existingDiagnosis.needsAdjustment);
+    } else if (statusFilter === 'NOT_PURCHASED') {
+      list = list.filter(item => !item.existingDiagnosis.hasPurchased);
+    } else if (statusFilter === 'EDP') {
+      list = list.filter(item => item.recommendationType === 'EDP');
+    } else if (statusFilter === 'RISP') {
+      list = list.filter(item => item.recommendationType === 'RISP');
     }
 
     // Filter by search query
@@ -418,7 +771,8 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       const q = searchQuery.toLowerCase().trim();
       list = list.filter(item => 
         item.accountName.toLowerCase().includes(q) || 
-        item.accountId.toLowerCase().includes(q)
+        item.accountId.toLowerCase().includes(q) ||
+        item.existingDiagnosis.summaryText.toLowerCase().includes(q)
       );
     }
 
@@ -441,6 +795,9 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
         case 'accountName':
           comparison = a.accountName.localeCompare(b.accountName, undefined, { numeric: true });
           break;
+        case 'status':
+          comparison = (a.existingDiagnosis.hasPurchased ? 1 : 0) - (b.existingDiagnosis.hasPurchased ? 1 : 0);
+          break;
         default:
           comparison = b.totalCost - a.totalCost;
       }
@@ -448,7 +805,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
     });
 
     return list;
-  }, [evaluationResults, recommendationFilter, searchQuery, sortField, sortDirection]);
+  }, [evaluationResults, statusFilter, searchQuery, sortField, sortDirection]);
 
   // Handle Excel Export
   const handleExportToExcel = () => {
@@ -460,6 +817,13 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
     const exportRows = evaluationResults.map(item => ({
       '帳號 ID (Account ID)': item.accountId,
       '帳號名稱 (Account Name)': item.accountName,
+      '是否已購 RI/SP': item.existingDiagnosis.hasPurchased ? '是 (已購買)' : '否 (未購買)',
+      '既有 RI/SP 方案': item.existingDiagnosis.currentPlanName,
+      '是否建議調整': item.existingDiagnosis.needsAdjustment ? '是 (建議調整)' : '否 (維持現狀)',
+      '調整建議標籤': item.existingDiagnosis.badgeLabel,
+      '調整建議摘要': item.existingDiagnosis.summaryText,
+      '現況預估支出 ($USD)': Number(item.existingDiagnosis.currentCost.toFixed(2)),
+      '調整後預估效益 ($USD/月)': Number(item.existingDiagnosis.potentialMonthlySavingsVsCurrent.toFixed(2)),
       '原幣花費總計 ($USD)': Number(item.totalCost.toFixed(2)),
       'RI/SP 適用服務花費 ($USD)': Number(item.eligibleCost.toFixed(2)),
       '非適用服務花費 ($USD)': Number(item.nonEligibleCost.toFixed(2)),
@@ -485,6 +849,13 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
     exportRows.push({
       '帳號 ID (Account ID)': '總計 (TOTAL)',
       '帳號名稱 (Account Name)': `共 ${summaryKpis.totalAccounts} 個帳號`,
+      '是否已購 RI/SP': `已購: ${summaryKpis.purchasedCount} 個 / 未購: ${summaryKpis.notPurchasedCount} 個`,
+      '既有 RI/SP 方案': '-',
+      '是否建議調整': `需調整: ${summaryKpis.purchasedNeedAdjustCount + summaryKpis.newPurchaseRispCount} 個`,
+      '調整建議標籤': `到期轉EDP: ${summaryKpis.exitToEdpCount} | 升級3Y: ${summaryKpis.upgrade3YCount} | 新購: ${summaryKpis.newPurchaseRispCount}`,
+      '調整建議摘要': `調整後每月預估可再省 $${formatNumber(summaryKpis.totalPotentialAdjustmentSavings)} USD`,
+      '現況預估支出 ($USD)': Number(summaryKpis.totalCurrentSpend.toFixed(2)),
+      '調整後預估效益 ($USD/月)': Number(summaryKpis.totalPotentialAdjustmentSavings.toFixed(2)),
       '原幣花費總計 ($USD)': Number(summaryKpis.totalOnDemand.toFixed(2)),
       'RI/SP 適用服務花費 ($USD)': Number(summaryKpis.totalEligible.toFixed(2)),
       '非適用服務花費 ($USD)': Number(summaryKpis.totalNonEligible.toFixed(2)),
@@ -494,7 +865,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       '1年全預付方案費用 ($USD)': Number(evaluationResults.reduce((s, i) => s + i.cost1YAllUpfront, 0).toFixed(2)),
       '3年無預付方案費用 ($USD)': Number(evaluationResults.reduce((s, i) => s + i.cost3YNoUpfront, 0).toFixed(2)),
       '3年全預付方案費用 ($USD)': Number(evaluationResults.reduce((s, i) => s + i.cost3YAllUpfront, 0).toFixed(2)),
-      '最優推薦方案': `混合最佳策略 (${summaryKpis.edpRecommendedCount} 個採 EDP, ${summaryKpis.rispRecommendedCount} 個採 RI/SP)`,
+      '最優推薦方案': '各帳號最適配置混合策略',
       '推薦方案支出 ($USD)': Number(summaryKpis.totalOptimalCost.toFixed(2)),
       'vs 原價節省金額 ($USD)': Number(summaryKpis.optimalSavingsVsOnDemand.toFixed(2)),
       'vs 原價節省率 (%)': Number((summaryKpis.totalOnDemand > 0 ? (summaryKpis.optimalSavingsVsOnDemand / summaryKpis.totalOnDemand) * 100 : 0).toFixed(2)),
@@ -503,14 +874,14 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       '1年期最優費用 ($USD)': Number(evaluationResults.reduce((s, i) => s + i.best1YearCost, 0).toFixed(2)),
       '3年期最優方案': '-',
       '3年期最優費用 ($USD)': Number(evaluationResults.reduce((s, i) => s + i.best3YearCost, 0).toFixed(2)),
-      '決策建議理由': `混合最佳策略可比全採 EDP 再多省 $${formatNumber(summaryKpis.optimalExtraSavingsVsEdp)} USD`
+      '決策建議理由': `依各帳號已購診斷調整後，相較現況每月可再創造 $${formatNumber(summaryKpis.totalPotentialAdjustmentSavings)} USD 節省效益`
     });
 
-    const filePrefix = analysisMode === 'monthly' ? `AWS_RISP_EDP_Recommendation_${selectedMonth}` : 'AWS_RISP_EDP_Recommendation_AllTime';
+    const filePrefix = analysisMode === 'monthly' ? `AWS_RISP_Existing_Adjustment_Report_${selectedMonth}` : 'AWS_RISP_Existing_Adjustment_Report_AllTime';
     exportToExcel(exportRows, filePrefix);
   };
 
-  const handleSort = (field: 'totalCost' | 'eligibleRatio' | 'bestSavings' | 'netDiffEdp' | 'accountName') => {
+  const handleSort = (field: 'totalCost' | 'eligibleRatio' | 'bestSavings' | 'netDiffEdp' | 'accountName' | 'status') => {
     if (sortField === field) {
       setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
@@ -528,37 +899,47 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-2">
             <div className="flex items-center gap-2.5">
-              <span className="p-2 bg-blue-600/30 text-blue-400 rounded-xl text-xl">💡</span>
+              <span className="p-2 bg-blue-600/30 text-blue-400 rounded-xl text-xl">🎯</span>
               <div>
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  RI / Savings Plans vs. EDP 方案決策評估核心規則
-                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30">
-                    企業財務合約決策模型
+                  RI / Savings Plans 既有合約檢查與調整建議分析
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                    現況檢查 ➔ 是否要調整 ➔ 最佳行動路徑
                   </span>
                 </h3>
                 <p className="text-xs text-blue-200/80 mt-0.5">
-                  精準分析各 AWS 帳號應採用「全帳號 EDP 75折」或「購買 RI/SP (1年/3年、無預付/全預付)」方案之最適成本組合。
+                  自動辨識各帳號是否已購買 RI/SP，精準診斷現況（覆蓋率、非適用服務原價懲罰），並給出具體調整建議（如：到期轉 EDP 75折、升級 3年全預付、追加承諾量）。
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs pt-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1">
               <div className="bg-gray-900/70 p-3 rounded-xl border border-gray-800 flex items-start gap-2.5">
-                <span className="text-purple-400 font-bold text-sm">方案 A</span>
+                <span className="text-emerald-400 font-bold text-sm">步驟 1</span>
                 <div>
-                  <span className="font-semibold text-purple-300">若帳號沒有購買 RI/SP：</span>
+                  <span className="font-semibold text-emerald-300">檢查是否已買 RI/SP</span>
                   <p className="text-gray-300 mt-0.5">
-                    該帳號全額享有 <span className="text-emerald-400 font-bold">EDP 75折優惠</span> (即全帳號所有服務費用均打 25% 折扣)。
+                    自動檢查計費明細中之 Savings Plans / Reserved Instances 行項與抵扣，並支援自訂標記。
                   </p>
                 </div>
               </div>
 
               <div className="bg-gray-900/70 p-3 rounded-xl border border-gray-800 flex items-start gap-2.5">
-                <span className="text-cyan-400 font-bold text-sm">方案 B</span>
+                <span className="text-cyan-400 font-bold text-sm">步驟 2</span>
                 <div>
-                  <span className="font-semibold text-cyan-300">若帳號購買任一 RI/SP 方案：</span>
+                  <span className="font-semibold text-cyan-300">分析現況合理性</span>
                   <p className="text-gray-300 mt-0.5">
-                    僅適用之運算/資料庫服務享有該方案的 RI/SP 折扣；<span className="text-amber-400 font-bold">其餘服務維持 100% 原價不打折</span> (無法享 EDP 75折)。
+                    比對「現行方案花費」vs「全帳號 EDP 75折」vs「3年全預付最優解」，檢驗是否存在非適用服務懲罰或方案低效。
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-gray-900/70 p-3 rounded-xl border border-gray-800 flex items-start gap-2.5">
+                <span className="text-purple-400 font-bold text-sm">步驟 3</span>
+                <div>
+                  <span className="font-semibold text-purple-300">產出調整建議與步驟</span>
+                  <p className="text-gray-300 mt-0.5">
+                    給予具體建議：維持現狀、合約到期不續約轉 EDP 75折、或升級更換為 3 年全預付以放大年省效益。
                   </p>
                 </div>
               </div>
@@ -590,7 +971,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       {/* 2. 控制與參數調整工具列 (Parameters & Scope Setting Bar) */}
       {/* ========================================================================= */}
       <div className="bg-gray-800 rounded-2xl border border-gray-700 p-5 shadow-lg space-y-4">
-        {/* 上半部：時間維度與涵蓋範圍 */}
+        {/* 上半部：時間維度、涵蓋範圍與模擬切換 */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-gray-700/80">
           <div className="flex flex-wrap items-center gap-4">
             {/* 時間維度 */}
@@ -652,7 +1033,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                   }`}
                   title="Compute (EC2, Lambda, Fargate) + 資料庫 (RDS, ElastiCache, Redshift, OpenSearch)"
                 >
-                  Compute + 資料庫 (全面推薦)
+                  Compute + 資料庫
                 </button>
                 <button
                   type="button"
@@ -664,30 +1045,46 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                   }`}
                   title="僅純 Compute: EC2, Lambda, Fargate"
                 >
-                  僅純 Compute (Compute SP)
+                  僅純 Compute
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="text-xs text-gray-400">
-            篩選範圍: <span className="text-blue-300 font-semibold">{accountFilterSummaryText}</span>
+          {/* 快速模擬控制項 */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-400 font-semibold">既有狀態模擬:</span>
+            <button
+              type="button"
+              onClick={handleResetOverrides}
+              className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-600 transition-colors"
+              title="清除手動覆蓋，還原系統依計費明細自動偵測"
+            >
+              🔄 還原自動偵測
+            </button>
+            <button
+              type="button"
+              onClick={() => handleBatchSetAllPurchased('1y_no')}
+              className="px-2.5 py-1 bg-blue-900/50 hover:bg-blue-800/60 text-blue-300 rounded-lg text-xs font-medium border border-blue-500/40 transition-colors"
+              title="模擬將全部帳號標記為已購買 1年無預付方案"
+            >
+              模擬全帳號已購(1年無預付)
+            </button>
           </div>
         </div>
 
-        {/* 下半部：方案折扣率設定 (可手動自訂或選擇官方基準) */}
+        {/* 下半部：方案折扣率設定 */}
         <div>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">
-                方案折扣率基準設定 (Discount Rate Settings):
+                方案基準折扣率設定 (可調整參數):
               </span>
               <span className="text-xs text-gray-400">
-                可直接調整百分比，系統即時重新計算各帳號評估結果
+                系統將即時套用最新折扣率重新評估各帳號之最適方案與調整建議
               </span>
             </div>
 
-            {/* 快速基準按鈕 */}
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -736,7 +1133,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                 <span className="text-xs text-gray-400 font-semibold">% 折扣</span>
               </div>
               <div className="text-[10px] text-gray-400 mt-1">
-                費用 = 原價 × {(1 - rates.edpDiscount).toFixed(2)}
+                未購 RI/SP 者全額適用
               </div>
             </div>
 
@@ -847,84 +1244,85 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       {/* 3. 企業決策核心看板 (Executive KPI Summary Cards) */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 卡片 1: 帳號推薦分佈 */}
+        {/* 卡片 1: 既有 RI/SP 持有現況 */}
         <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">
-              <span>評估帳號總數</span>
-              <span className="text-blue-400">👥 帳號決策分佈</span>
+              <span>帳號既有 RI/SP 狀態</span>
+              <span className="text-cyan-400">🔍 檢查診斷</span>
             </div>
             <div className="text-3xl font-extrabold text-white">
-              {summaryKpis.totalAccounts} <span className="text-sm font-normal text-gray-400">個帳號</span>
+              {summaryKpis.purchasedCount} <span className="text-sm font-normal text-gray-400">個已購買</span>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-gray-700/80 flex items-center justify-between text-xs">
-            <span className="flex items-center gap-1.5 text-purple-300 font-semibold">
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-              建議 EDP: {summaryKpis.edpRecommendedCount} 個
+            <span className="text-cyan-300 font-semibold">
+              已購佔比: {formatPercent(summaryKpis.totalAccounts > 0 ? (summaryKpis.purchasedCount / summaryKpis.totalAccounts) * 100 : 0)}
             </span>
-            <span className="flex items-center gap-1.5 text-cyan-300 font-semibold">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-500"></span>
-              建議 RI/SP: {summaryKpis.rispRecommendedCount} 個
+            <span className="text-gray-400">
+              未購: {summaryKpis.notPurchasedCount} 個
             </span>
           </div>
         </div>
 
-        {/* 卡片 2: 原幣花費與適用佔比 */}
+        {/* 卡片 2: 是否要調整帳號分佈 */}
         <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">
-              <span>原幣總花費 (On-Demand)</span>
-              <span className="text-amber-400">⚡ 基準支出</span>
+              <span>已購帳號調整建議</span>
+              <span className="text-amber-400">⚠️ 調整需求</span>
             </div>
-            <div className="text-2xl font-extrabold text-amber-400">
-              ${formatNumber(summaryKpis.totalOnDemand)}
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-amber-400">
+                {summaryKpis.purchasedNeedAdjustCount}
+              </span>
+              <span className="text-xs text-gray-400 font-normal">個需調整 / {summaryKpis.purchasedKeepCount} 個維持</span>
             </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-gray-700/80 text-xs text-gray-400 flex justify-between">
-            <span>RI/SP 適用服務:</span>
-            <span className="font-semibold text-gray-200">
-              ${formatNumber(summaryKpis.totalEligible)} ({formatPercent(summaryKpis.avgEligibleRatio)})
-            </span>
+          <div className="mt-4 pt-3 border-t border-gray-700/80 text-[11px] text-gray-300 flex flex-wrap gap-2 justify-between">
+            <span className="text-rose-400 font-semibold">到期轉EDP: {summaryKpis.exitToEdpCount}</span>
+            <span className="text-cyan-300 font-semibold">升級3年: {summaryKpis.upgrade3YCount}</span>
+            <span className="text-blue-300 font-semibold">加購覆蓋: {summaryKpis.expandCoverageCount}</span>
           </div>
         </div>
 
-        {/* 卡片 3: 全採 EDP 75折 支出 */}
+        {/* 卡片 3: 現況預估花費 vs 最優花費 */}
         <div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-md flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">
-              <span>全採 EDP 75折 總額</span>
-              <span className="text-purple-400">🏛️ 單一合約基準</span>
+              <span>現況支出 vs 最優支出</span>
+              <span className="text-purple-400">💰 支出水位</span>
             </div>
             <div className="text-2xl font-extrabold text-purple-300">
-              ${formatNumber(summaryKpis.totalEdpCost)}
+              ${formatNumber(summaryKpis.totalCurrentSpend)}
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-gray-700/80 text-xs text-gray-400 flex justify-between">
-            <span>vs 原價省:</span>
-            <span className="font-semibold text-purple-300">
-              -${formatNumber(summaryKpis.edpSavings)} ({(rates.edpDiscount * 100).toFixed(0)}%)
+            <span>最佳化後支出:</span>
+            <span className="font-semibold text-emerald-400">
+              ${formatNumber(summaryKpis.totalOptimalCost)}
             </span>
           </div>
         </div>
 
-        {/* 卡片 4: 最佳化混合策略 (Account-Level Optimal Hybrid) */}
+        {/* 卡片 4: 執行調整後預估再省效益 */}
         <div className="bg-gradient-to-br from-emerald-950/40 via-gray-800 to-teal-950/40 p-5 rounded-2xl border border-emerald-500/50 shadow-md flex flex-col justify-between ring-1 ring-emerald-500/30">
           <div>
             <div className="flex items-center justify-between text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
-              <span>各帳號最佳配置策略總額</span>
+              <span>執行調整預估額外創造效益</span>
               <span className="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-400/40">
-                ⭐ 最優解
+                ⭐ 調整紅利
               </span>
             </div>
             <div className="text-2xl font-extrabold text-emerald-400">
-              ${formatNumber(summaryKpis.totalOptimalCost)}
+              +${formatNumber(summaryKpis.totalPotentialAdjustmentSavings)}
+              <span className="text-xs text-emerald-300 font-normal ml-1">/月</span>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-emerald-800/60 text-xs flex items-center justify-between">
-            <span className="text-gray-300">比全走 EDP 再多省:</span>
+            <span className="text-gray-300">預估年化再省:</span>
             <span className="font-bold text-emerald-300 text-sm">
-              +${formatNumber(summaryKpis.optimalExtraSavingsVsEdp)}
+              +${formatNumber(summaryKpis.totalPotentialAdjustmentSavings * 12)} /年
             </span>
           </div>
         </div>
@@ -934,26 +1332,26 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       {/* 4. 各帳號分析與建議決策表格 (Account Detail & Decision Table) */}
       {/* ========================================================================= */}
       <Card
-        title={`全部帳號 RI/SP vs. EDP 方案決策清單 ${analysisMode === 'monthly' ? `(${selectedMonth})` : '(全期間累計)'}`}
+        title={`全部帳號 RI/SP 既有狀態檢查與調整建議清單 ${analysisMode === 'monthly' ? `(${selectedMonth})` : '(全期間累計)'}`}
         actionButton={
           <button
             type="button"
             onClick={handleExportToExcel}
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-xl text-xs transition-all shadow hover:shadow-lg flex items-center gap-2 cursor-pointer"
           >
-            <span>📥 匯出 RI/SP 分析建議 Excel</span>
+            <span>📥 匯出 RI/SP 檢查與調整建議 Excel</span>
           </button>
         }
       >
         <div className="space-y-4">
           {/* 搜尋與篩選列 */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-gray-900/60 p-3 rounded-xl border border-gray-700/60">
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               {/* 搜尋帳號 */}
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="搜尋帳號名稱或 ID..."
+                  placeholder="搜尋帳號名稱、ID 或調整建議..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-64 bg-gray-800 border border-gray-600 text-white text-xs rounded-lg pl-8 pr-3 py-2 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -969,40 +1367,51 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                 )}
               </div>
 
-              {/* 推薦類型篩選 */}
-              <div className="inline-flex rounded-lg shadow-sm" role="group">
+              {/* 狀態篩選膠囊按鈕 */}
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setRecommendationFilter('ALL')}
-                  className={`px-3 py-1.5 text-xs font-semibold border border-gray-600 rounded-l-lg transition-all ${
-                    recommendationFilter === 'ALL'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  onClick={() => setStatusFilter('ALL')}
+                  className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                    statusFilter === 'ALL'
+                      ? 'bg-blue-600 text-white border-blue-500 shadow'
+                      : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-750'
                   }`}
                 >
                   全部 ({evaluationResults.length})
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRecommendationFilter('EDP')}
-                  className={`px-3 py-1.5 text-xs font-semibold border-t border-b border-gray-600 transition-all ${
-                    recommendationFilter === 'EDP'
-                      ? 'bg-purple-600 text-white border-purple-600 shadow'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  onClick={() => setStatusFilter('PURCHASED_NEED_ADJUST')}
+                  className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                    statusFilter === 'PURCHASED_NEED_ADJUST'
+                      ? 'bg-amber-600 text-white border-amber-500 shadow'
+                      : 'bg-gray-800 text-amber-400 border-gray-700 hover:bg-gray-750'
                   }`}
                 >
-                  建議 EDP ({summaryKpis.edpRecommendedCount})
+                  已購【建議調整】({summaryKpis.purchasedNeedAdjustCount})
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRecommendationFilter('RISP')}
-                  className={`px-3 py-1.5 text-xs font-semibold border border-gray-600 rounded-r-lg transition-all ${
-                    recommendationFilter === 'RISP'
-                      ? 'bg-cyan-600 text-white border-cyan-600 shadow'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  onClick={() => setStatusFilter('PURCHASED_KEEP')}
+                  className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                    statusFilter === 'PURCHASED_KEEP'
+                      ? 'bg-emerald-600 text-white border-emerald-500 shadow'
+                      : 'bg-gray-800 text-emerald-400 border-gray-700 hover:bg-gray-750'
                   }`}
                 >
-                  建議 RI/SP ({summaryKpis.rispRecommendedCount})
+                  已購【維持現狀】({summaryKpis.purchasedKeepCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('NOT_PURCHASED')}
+                  className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                    statusFilter === 'NOT_PURCHASED'
+                      ? 'bg-purple-600 text-white border-purple-500 shadow'
+                      : 'bg-gray-800 text-purple-300 border-gray-700 hover:bg-gray-750'
+                  }`}
+                >
+                  未購 RI/SP ({summaryKpis.notPurchasedCount})
                 </button>
               </div>
             </div>
@@ -1024,6 +1433,16 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                     帳號 (Account) {sortField === 'accountName' && (sortDirection === 'asc' ? '▲' : '▼')}
                   </th>
                   <th
+                    className="p-3 font-semibold text-center cursor-pointer hover:text-white"
+                    onClick={() => handleSort('status')}
+                    title="系統自動偵測或手動設定之既有 RI/SP 狀態"
+                  >
+                    既有 RI/SP 狀態 {sortField === 'status' && (sortDirection === 'asc' ? '▲' : '▼')}
+                  </th>
+                  <th className="p-3 font-semibold text-center min-w-[200px]">
+                    是否要調整？(調整診斷建議)
+                  </th>
+                  <th
                     className="p-3 font-semibold text-right cursor-pointer hover:text-white"
                     onClick={() => handleSort('totalCost')}
                   >
@@ -1032,24 +1451,15 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                   <th
                     className="p-3 font-semibold text-right cursor-pointer hover:text-white"
                     onClick={() => handleSort('eligibleRatio')}
-                    title="適用 RI/SP 服務花費 / 原幣總花費"
+                    title="適用 RI/SP 服務花費佔比"
                   >
                     適用服務佔比 {sortField === 'eligibleRatio' && (sortDirection === 'asc' ? '▲' : '▼')}
                   </th>
+                  <th className="p-3 font-semibold text-right text-gray-300 bg-gray-800/40">
+                    現況預估花費
+                  </th>
                   <th className="p-3 font-semibold text-right text-purple-300 bg-purple-950/20">
                     EDP 75折
-                  </th>
-                  <th className="p-3 font-semibold text-right text-blue-300 bg-blue-950/20">
-                    1年無預付
-                  </th>
-                  <th className="p-3 font-semibold text-right text-blue-300 bg-blue-950/20">
-                    1年全預付
-                  </th>
-                  <th className="p-3 font-semibold text-right text-indigo-300 bg-indigo-950/20">
-                    3年無預付
-                  </th>
-                  <th className="p-3 font-semibold text-right text-indigo-300 bg-indigo-950/20">
-                    3年全預付
                   </th>
                   <th className="p-3 font-semibold text-center">
                     最佳推薦方案
@@ -1060,21 +1470,17 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                   >
                     最優支出 / 節省 {sortField === 'bestSavings' && (sortDirection === 'asc' ? '▲' : '▼')}
                   </th>
-                  <th
-                    className="p-3 font-semibold text-right cursor-pointer hover:text-white"
-                    onClick={() => handleSort('netDiffEdp')}
-                    title="最優方案比全採 EDP 75折多省的金額 (正值為更省，負值為不如 EDP)"
-                  >
-                    vs EDP 淨差額 {sortField === 'netDiffEdp' && (sortDirection === 'asc' ? '▲' : '▼')}
+                  <th className="p-3 font-semibold text-right text-emerald-400 bg-emerald-950/10">
+                    調整後預估效益
                   </th>
                   <th className="p-3 font-semibold text-center">
-                    明細與計算
+                    查看計算與調整
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700/60 font-mono text-gray-200">
                 {displayedEvaluations.map((item) => {
-                  const isEdpBest = item.recommendationType === 'EDP';
+                  const diag = item.existingDiagnosis;
                   return (
                     <tr
                       key={item.accountId}
@@ -1087,6 +1493,41 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         </div>
                         <div className="text-[11px] text-gray-400 font-mono">
                           ID: {item.accountId}
+                        </div>
+                      </td>
+
+                      {/* 既有 RI/SP 狀態 (可切換) */}
+                      <td className="p-3 text-center font-sans">
+                        <div className="flex flex-col items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAccountPurchased(item.accountId, diag.hasPurchased, '1y_no')}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                              diag.hasPurchased
+                                ? 'bg-cyan-900/50 text-cyan-200 border-cyan-500/60 hover:bg-cyan-800/60'
+                                : 'bg-gray-800 text-gray-400 border-gray-600 hover:bg-gray-700'
+                            }`}
+                            title="點擊可切換此帳號之 RI/SP 購買狀態"
+                          >
+                            <span>{diag.hasPurchased ? '✓ 已購買' : '✕ 未購買'}</span>
+                          </button>
+                          {diag.hasPurchased && (
+                            <span className="text-[10px] text-cyan-400/90 font-mono">
+                              {diag.currentPlanName.replace('RI/SP ', '')}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* 是否要調整？(調整診斷建議) */}
+                      <td className="p-3 font-sans">
+                        <div className="flex flex-col gap-1 max-w-xs">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border w-fit ${diag.badgeColorClass}`}>
+                            {diag.badgeLabel}
+                          </span>
+                          <span className="text-[11px] text-gray-300 leading-tight">
+                            {diag.summaryText}
+                          </span>
                         </div>
                       </td>
 
@@ -1103,7 +1544,6 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         <div className="text-[10px] text-gray-400">
                           ${formatNumber(item.eligibleCost)}
                         </div>
-                        {/* 迷你進度條 */}
                         <div className="w-16 h-1 bg-gray-700 rounded-full ml-auto mt-1 overflow-hidden">
                           <div
                             className={`h-full ${item.eligibleRatio >= 50 ? 'bg-cyan-400' : 'bg-gray-400'}`}
@@ -1112,36 +1552,21 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         </div>
                       </td>
 
+                      {/* 現況預估花費 */}
+                      <td className="p-3 text-right bg-gray-800/40 font-semibold text-gray-200">
+                        ${formatNumber(diag.currentCost)}
+                      </td>
+
                       {/* EDP 75折費用 */}
-                      <td className={`p-3 text-right ${isEdpBest ? 'bg-purple-950/40 text-purple-200 font-bold' : 'text-gray-300'}`}>
+                      <td className="p-3 text-right text-purple-200">
                         ${formatNumber(item.costEdp)}
-                      </td>
-
-                      {/* 1年無預付 */}
-                      <td className={`p-3 text-right ${item.bestPlanKey === '1y_no' ? 'bg-blue-950/40 text-blue-200 font-bold' : 'text-gray-300'}`}>
-                        ${formatNumber(item.cost1YNoUpfront)}
-                      </td>
-
-                      {/* 1年全預付 */}
-                      <td className={`p-3 text-right ${item.bestPlanKey === '1y_all' ? 'bg-blue-950/40 text-blue-200 font-bold' : 'text-gray-300'}`}>
-                        ${formatNumber(item.cost1YAllUpfront)}
-                      </td>
-
-                      {/* 3年無預付 */}
-                      <td className={`p-3 text-right ${item.bestPlanKey === '3y_no' ? 'bg-indigo-950/40 text-indigo-200 font-bold' : 'text-gray-300'}`}>
-                        ${formatNumber(item.cost3YNoUpfront)}
-                      </td>
-
-                      {/* 3年全預付 */}
-                      <td className={`p-3 text-right ${item.bestPlanKey === '3y_all' ? 'bg-indigo-950/40 text-indigo-200 font-bold' : 'text-gray-300'}`}>
-                        ${formatNumber(item.cost3YAllUpfront)}
                       </td>
 
                       {/* 最佳推薦方案 */}
                       <td className="p-3 text-center font-sans">
                         <span
-                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
-                            isEdpBest
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border ${
+                            item.recommendationType === 'EDP'
                               ? 'bg-purple-900/40 text-purple-300 border-purple-500/50'
                               : 'bg-cyan-900/40 text-cyan-300 border-cyan-500/50'
                           }`}
@@ -1156,21 +1581,20 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                           ${formatNumber(item.bestCost)}
                         </div>
                         <div className="text-[10px] text-emerald-400/90">
-                          省 ${formatNumber(item.bestSavingsVsOnDemand)} ({formatPercent(item.bestSavingsRateVsOnDemand)})
+                          省 ${formatNumber(item.bestSavingsVsOnDemand)}
                         </div>
                       </td>
 
-                      {/* vs EDP 淨差額 */}
-                      <td className="p-3 text-right">
-                        {item.netSavingsVsEdp > 0 ? (
-                          <div className="font-bold text-emerald-400">
-                            +${formatNumber(item.netSavingsVsEdp)}
-                            <div className="text-[10px] text-emerald-500 font-sans">比 EDP 再省</div>
+                      {/* 調整後預估效益 */}
+                      <td className="p-3 text-right bg-emerald-950/10">
+                        {diag.potentialMonthlySavingsVsCurrent > 0 ? (
+                          <div className="font-extrabold text-emerald-400">
+                            +${formatNumber(diag.potentialMonthlySavingsVsCurrent)}
+                            <div className="text-[10px] text-emerald-500 font-sans">/月</div>
                           </div>
                         ) : (
-                          <div className="font-semibold text-gray-400">
-                            $0.00
-                            <div className="text-[10px] text-purple-400 font-sans">即 EDP 最優</div>
+                          <div className="text-gray-400 text-xs font-sans">
+                            - (已屬最佳)
                           </div>
                         )}
                       </td>
@@ -1191,7 +1615,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
 
                 {displayedEvaluations.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-gray-400 font-sans">
+                    <td colSpan={11} className="p-8 text-center text-gray-400 font-sans">
                       沒有符合條件的帳號資料
                     </td>
                   </tr>
@@ -1203,7 +1627,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
       </Card>
 
       {/* ========================================================================= */}
-      {/* 5. 帳號詳細計算內容彈窗 (Account Calculation Detail Modal) */}
+      {/* 5. 帳號詳細計算內容與調整建議彈窗 (Account Calculation Detail Modal) */}
       {/* ========================================================================= */}
       {inspectingAccount && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -1213,16 +1637,10 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-bold text-white">
-                    帳號成本與 RI/SP 決策計算明細
+                    帳號成本與 RI/SP 既有合約調整診斷明細
                   </h3>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                      inspectingAccount.recommendationType === 'EDP'
-                        ? 'bg-purple-900/40 text-purple-300 border-purple-500/50'
-                        : 'bg-cyan-900/40 text-cyan-300 border-cyan-500/50'
-                    }`}
-                  >
-                    推薦方案: {inspectingAccount.bestPlanName}
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${inspectingAccount.existingDiagnosis.badgeColorClass}`}>
+                    {inspectingAccount.existingDiagnosis.badgeLabel}
                   </span>
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -1241,6 +1659,133 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
 
             {/* Modal Content */}
             <div className="p-6 overflow-y-auto space-y-6">
+              {/* 既有狀態診斷與互動切換區塊 */}
+              <div className="bg-gradient-to-r from-gray-800 to-gray-850 p-4 rounded-xl border border-blue-500/30 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                      <span>🔍 帳號既有 RI/SP 持有狀態與方案模擬切換</span>
+                    </h4>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {inspectingAccount.existingDiagnosis.isAutoDetected 
+                        ? '狀態來源: 計費資料自動偵測' 
+                        : '狀態來源: 使用者手動設定'}
+                    </p>
+                  </div>
+
+                  {/* 切換按鈕群 */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleToggleAccountPurchased(inspectingAccount.accountId, true);
+                        setInspectingAccount(prev => prev ? {
+                          ...prev,
+                          existingDiagnosis: {
+                            ...prev.existingDiagnosis,
+                            hasPurchased: false,
+                            currentPlanKey: 'none',
+                            currentPlanName: '未購買 (採全帳號 EDP 75折)'
+                          }
+                        } : null);
+                      }}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                        !inspectingAccount.existingDiagnosis.hasPurchased
+                          ? 'bg-purple-600 text-white border-purple-500 shadow'
+                          : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-750'
+                      }`}
+                    >
+                      未購買 (採 EDP)
+                    </button>
+
+                    {(['1y_no', '1y_all', '3y_no', '3y_all'] as RiSpPlanKey[]).map(key => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          handleChangeAccountPlan(inspectingAccount.accountId, key);
+                          setInspectingAccount(prev => prev ? {
+                            ...prev,
+                            existingDiagnosis: {
+                              ...prev.existingDiagnosis,
+                              hasPurchased: true,
+                              currentPlanKey: key,
+                              currentPlanName: PLAN_NAMES[key]
+                            }
+                          } : null);
+                        }}
+                        className={`px-2 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                          inspectingAccount.existingDiagnosis.hasPurchased && inspectingAccount.existingDiagnosis.currentPlanKey === key
+                            ? 'bg-cyan-600 text-white border-cyan-500 shadow'
+                            : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-750'
+                        }`}
+                      >
+                        {PLAN_NAMES[key].replace('RI/SP ', '')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 偵測到的特徵 */}
+                {inspectingAccount.existingDiagnosis.detectedFeatures.length > 0 && (
+                  <div className="bg-gray-900/70 p-2.5 rounded-lg border border-gray-800 text-xs">
+                    <span className="text-gray-400 font-semibold">帳單明細中偵測之特徵項目：</span>
+                    <ul className="list-disc list-inside text-gray-300 mt-1 space-y-0.5">
+                      {inspectingAccount.existingDiagnosis.detectedFeatures.map((f, i) => (
+                        <li key={i}>{f}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* 是否要調整？深度診斷與執行行動清單 */}
+              <div className="bg-gradient-to-r from-gray-800 to-gray-850 p-5 rounded-xl border border-amber-500/40 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-700/80">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💡</span>
+                    <div>
+                      <h4 className="text-sm font-bold text-white">
+                        是否要調整？具體調整方針與效益分析
+                      </h4>
+                      <p className="text-xs text-gray-400">
+                        針對該帳號工作負載特徵與合約現況之精算建議
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-400">調整預估額外效益</div>
+                    <div className="text-base font-extrabold text-emerald-400">
+                      {inspectingAccount.existingDiagnosis.potentialMonthlySavingsVsCurrent > 0 
+                        ? `+${formatNumber(inspectingAccount.existingDiagnosis.potentialMonthlySavingsVsCurrent)} USD /月`
+                        : '現況已屬最佳'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-gray-200 leading-relaxed bg-gray-900/60 p-3.5 rounded-xl border border-gray-800">
+                  <strong className="text-amber-300 block mb-1">【診斷結論】</strong>
+                  {inspectingAccount.existingDiagnosis.detailReason}
+                </div>
+
+                {/* 具體執行行動步驟 */}
+                {inspectingAccount.existingDiagnosis.actionSteps.length > 0 && (
+                  <div>
+                    <h5 className="text-xs font-bold uppercase tracking-wider text-blue-300 mb-2">
+                      📋 具體實施與調整執行步驟：
+                    </h5>
+                    <div className="space-y-1.5">
+                      {inspectingAccount.existingDiagnosis.actionSteps.map((step, idx) => (
+                        <div key={idx} className="bg-gray-900/80 p-2.5 rounded-lg border border-gray-800 text-xs text-gray-300 flex items-start gap-2">
+                          <span className="text-blue-400 font-bold shrink-0">Step {idx + 1}</span>
+                          <span>{step.replace(/^\d+\.\s*/, '')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* 核心金額拆解卡片 */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-gray-800/80 p-4 rounded-xl border border-gray-700">
@@ -1262,28 +1807,13 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                 </div>
 
                 <div className="bg-gray-800/80 p-4 rounded-xl border border-gray-700">
-                  <div className="text-xs text-gray-400 font-bold mb-1">其他非適用服務花費</div>
+                  <div className="text-xs text-gray-400 font-bold mb-1">非適用服務花費 (維持原價)</div>
                   <div className="text-xl font-extrabold text-gray-300">
                     ${formatNumber(inspectingAccount.nonEligibleCost)}
                   </div>
                   <div className="text-[11px] text-amber-400 mt-1">
-                    若買 RI/SP 則維持 100% 原價
+                    佔比: {formatPercent(100 - inspectingAccount.eligibleRatio)} (若買 RI/SP 維持 100% 原價)
                   </div>
-                </div>
-              </div>
-
-              {/* 決策數學推導解析 */}
-              <div className="bg-gradient-to-r from-gray-800 to-gray-850 p-4 rounded-xl border border-gray-700 space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-                  <span>📐 決策數學推導說明</span>
-                </h4>
-                <p className="text-xs text-gray-300 leading-relaxed">
-                  {inspectingAccount.recommendationReason}
-                </p>
-                <div className="text-xs bg-gray-900/80 p-3 rounded-lg border border-gray-800 font-mono text-gray-300 space-y-1">
-                  <div>• 走全帳號 EDP: ${formatNumber(inspectingAccount.totalCost)} × {(1 - rates.edpDiscount).toFixed(2)} = <span className="text-purple-300 font-bold">${formatNumber(inspectingAccount.costEdp)}</span></div>
-                  <div>• 走最佳推薦方案 ({inspectingAccount.bestPlanName}): 適用折後 + 非適用原價 = <span className="text-emerald-300 font-bold">${formatNumber(inspectingAccount.bestCost)}</span></div>
-                  <div>• 兩者相較結果: {inspectingAccount.netSavingsVsEdp > 0 ? `選擇 ${inspectingAccount.bestPlanName} 比 EDP 再省 $${formatNumber(inspectingAccount.netSavingsVsEdp)}` : '走 EDP 方案總額最低，最為划算'}</div>
                 </div>
               </div>
 
@@ -1320,7 +1850,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         <td className="p-2.5 text-right text-gray-400">$0.00</td>
                         <td className="p-2.5 text-center font-sans">
                           {inspectingAccount.bestPlanKey === 'edp' ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-600 text-white">最佳推薦</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-600 text-white">最優解</span>
                           ) : (
                             <span className="text-gray-400 text-xs">可選</span>
                           )}
@@ -1342,7 +1872,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         </td>
                         <td className="p-2.5 text-center font-sans">
                           {inspectingAccount.bestPlanKey === '1y_no' && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最佳推薦</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最優解</span>
                           )}
                         </td>
                       </tr>
@@ -1362,7 +1892,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         </td>
                         <td className="p-2.5 text-center font-sans">
                           {inspectingAccount.bestPlanKey === '1y_all' && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最佳推薦</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最優解</span>
                           )}
                         </td>
                       </tr>
@@ -1382,7 +1912,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         </td>
                         <td className="p-2.5 text-center font-sans">
                           {inspectingAccount.bestPlanKey === '3y_no' && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最佳推薦</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最優解</span>
                           )}
                         </td>
                       </tr>
@@ -1402,7 +1932,7 @@ const RiSpAnalysisSection: React.FC<RiSpAnalysisSectionProps> = ({
                         </td>
                         <td className="p-2.5 text-center font-sans">
                           {inspectingAccount.bestPlanKey === '3y_all' && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最佳推薦</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">最優解</span>
                           )}
                         </td>
                       </tr>

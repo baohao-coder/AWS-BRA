@@ -1337,7 +1337,7 @@ const ServiceAnalysisTab: React.FC<ServiceAnalysisTabProps> = ({ data }) => {
                 </span>
               </div>
               <p className="text-xs text-gray-400 mt-1.5">
-                全帳號 RI/SP vs. EDP 方案決策評估、4 種方案對比、試算明細與 Excel 匯出
+                檢查已購 RI/SP 現況、是否要調整(到期轉EDP/升級3年)、最適方案評估與 Excel 匯出
               </p>
             </button>
 

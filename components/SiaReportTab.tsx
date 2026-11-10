@@ -41,11 +41,36 @@ const isGenAiProduct = (productName: string, usageType: string = '', itemDescrip
          combined.includes('titan');
 };
 
-// Check if an EC2 item is Linux / Red Hat
+// Check if an EC2 item is Linux / Red Hat (excluding NatGateway & RDS, DocDB, ElastiCache, SimpleDB)
 const isLinuxOrRhelEc2 = (productName: string, usageType: string, itemDescription: string) => {
   const productLower = (productName || '').toLowerCase();
   const usageLower = (usageType || '').toLowerCase();
   const descLower = (itemDescription || '').toLowerCase();
+
+  // Exclude Usage Type = NatGateway or VpcPeering as per Table 1 criteria
+  if (
+    usageLower.includes('natgateway') || usageLower.includes('nat-gateway') || usageLower.includes('nat gateway') ||
+    usageLower.includes('vpcpeering') || usageLower.includes('vpc-peering') || usageLower.includes('vpc peering')
+  ) {
+    return false;
+  }
+
+  // Exclude 產品名稱: AmazonRDS, AmazonDocDB, AmazonElastiCache, AmazonSimpleDB as per Table 1 criteria
+  const productClean = productLower.replace(/[\s\-_]+/g, '');
+  if (
+    productClean.includes('amazonrds') || 
+    productClean.includes('relationaldatabaseservice') || 
+    productLower.startsWith('rds') ||
+    productLower === 'amazon rds' ||
+    productClean.includes('amazondocdb') ||
+    productClean.includes('documentdb') ||
+    productClean.includes('amazonelasticache') ||
+    productClean.includes('elasticache') ||
+    productClean.includes('amazonsimpledb') ||
+    productClean.includes('simpledb')
+  ) {
+    return false;
+  }
 
   const isEc2 = productLower.includes('elastic compute cloud') || 
                 productLower.includes('amazon ec2') || 
@@ -64,17 +89,27 @@ const isLinuxOrRhelEc2 = (productName: string, usageType: string, itemDescriptio
   return (isEc2 || isInstanceUsage) && isLinuxOrRhel;
 };
 
-// Check if an EC2 item is Graviton powered
-const isGravitonUsage = (productName: string, usageType: string, itemDescription: string) => {
-  const usageLower = (usageType || '').toLowerCase();
+// Check if an item matches Table 2 Total Instance (Denominator):
+// Item Description contains 'Instance' (已取消 Product Name = AmazonEC2 限制)
+const isInstanceItem = (_productName: string, itemDescription: string) => {
   const descLower = (itemDescription || '').toLowerCase();
-  
-  // Instance families with 'g' (e.g. c6g, c7g, m6g, r6g, t4g, etc.)
-  const isGravitonInstance = /([a-z]\d+g[a-z]*\.)|(graviton)|(\bgraviton\b)/i.test(usageLower) || 
-                             /graviton/i.test(descLower);
-  
-  return isGravitonInstance;
+  return descLower.includes('instance');
 };
+
+// Check if an item matches Table 2 Graviton Instance (Numerator):
+// Item Description contains 'Instance' and matches '*g.*' (已取消 Product Name = AmazonEC2 限制)
+const isGravitonInstanceItem = (productName: string, itemDescription: string) => {
+  if (!isInstanceItem(productName, itemDescription)) {
+    return false;
+  }
+  const descLower = (itemDescription || '').toLowerCase();
+  // Matches '*g.*': contains literal 'g.' or Graviton instance family pattern (e.g. c6g., t4g., m6g., r6g., c7g., etc.)
+  return descLower.includes('g.') || /([a-z0-9]+g[a-z0-9]*\.)/i.test(descLower);
+};
+
+// Backward compatibility aliases
+const isEc2InstanceItem = (productName: string, itemDescription: string) => isInstanceItem(productName, itemDescription);
+const isGravitonUsage = (productName: string, _usageType: string, itemDescription: string) => isGravitonInstanceItem(productName, itemDescription);
 
 // Check if a service item is RDS (Amazon Relational Database Service)
 // 4-3: 從 "Product Name" 找尋關鍵字包含 "AmazonRDS"
@@ -260,11 +295,11 @@ const useSiaAnalysis = (data: BillingData) => {
         monthData.linuxEc2Cost += detail.totalCost;
       }
 
-      // 2. Table 2: Graviton Adoption (Normalized Instance Hours / Instance Usage Hours on EC2)
-      if (isEc2 && USAGE_TYPE_EC2_KEYWORDS.some(kw => usageTypeLower.includes(kw))) {
-        monthData.totalEc2Usage += detail.usages;
-        if (isGravitonUsage(detail.productName, detail.usageType, detail.itemDescription)) {
-          monthData.gravitonUsage += detail.usages;
+      // 2. Table 2: Graviton Adoption (Description 含 Instance 之 *g.* 與總 Instance 之 Usages 總計比，已取消 Product Name 限制)
+      if (isInstanceItem(detail.productName, detail.itemDescription)) {
+        monthData.totalEc2Usage += (detail.usages || 0);
+        if (isGravitonInstanceItem(detail.productName, detail.itemDescription)) {
+          monthData.gravitonUsage += (detail.usages || 0);
         }
       }
       
@@ -357,10 +392,15 @@ const useSiaAnalysis = (data: BillingData) => {
     const genAiYear2Cost = genAiYear2Months.reduce((sum, m) => sum + m.genAiCost, 0);
     const genAiYear2Credit = Math.min(genAiYear2Cost * 0.5, 100000);
 
+    // Year 3 / Period 3 (Month 25-34: 2027-07 to 2028-04): 50% of Commitment-Eligible Fees, cap $100,000
+    const genAiYear3Months = monthlyResults.filter(m => m.month >= '2027-07' && m.month <= '2028-04');
+    const genAiYear3Cost = genAiYear3Months.reduce((sum, m) => sum + m.genAiCost, 0);
+    const genAiYear3Credit = Math.min(genAiYear3Cost * 0.5, 100000);
+
     const cumulativeTotal = monthlyResults.reduce((sum, item) => sum + item.totalPayment, 0);
     const cumulativeGenAiCost = monthlyResults.reduce((sum, item) => sum + item.genAiCost, 0);
     const cumulativeRdsCost = monthlyResults.reduce((sum, item) => sum + item.rdsCost, 0);
-    const totalGenAiCredit = genAiYear1Credit + genAiYear2Credit;
+    const totalGenAiCredit = genAiYear1Credit + genAiYear2Credit + genAiYear3Credit;
 
     // 4. Table 4: RDS Credits Calculations
     // 4-1: 第一年 (2025-07 ~ 2026-06) 使用量必須達到 $2,000,000 美元 (含) 以上（不含營業稅）
@@ -376,7 +416,7 @@ const useSiaAnalysis = (data: BillingData) => {
     const rdsCreditEarned = rdsFullyAchieved ? 800000 : 0;
 
     // Total SIA Potential and Achieved Calculation
-    // Total Cap: $450k (OS) + $300k (Graviton) + $150k (GenAI) + $800k (RDS) = $1,700,000
+    // Total Cap: $450k (OS) + $300k (Graviton) + $250k (GenAI) + $800k (RDS) = $1,800,000
     let earnedCreditsTotal = 0;
     if (computeCheck1.achieved) earnedCreditsTotal += 300000;
     if (computeCheck2.achieved) earnedCreditsTotal += 150000;
@@ -398,6 +438,8 @@ const useSiaAnalysis = (data: BillingData) => {
       genAiYear1Credit,
       genAiYear2Cost,
       genAiYear2Credit,
+      genAiYear3Cost,
+      genAiYear3Credit,
       totalGenAiCredit,
       rdsYear1TotalSpend,
       rdsYear1RdsSpend,
@@ -423,7 +465,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
 
   // Filtered lists for details section
   const computeDetails = getFilteredDetails(d => isLinuxOrRhelEc2(d.productName, d.usageType, d.itemDescription));
-  const gravitonDetails = getFilteredDetails(d => isGravitonUsage(d.productName, d.usageType, d.itemDescription));
+  const gravitonDetails = getFilteredDetails(d => isGravitonInstanceItem(d.productName, d.itemDescription));
   const genAiDetails = getFilteredDetails(d => isGenAiProduct(d.productName, d.usageType, d.itemDescription));
   const rdsDetails = getFilteredDetails(d => isRdsProduct(d.productName, d.usageType, d.itemDescription));
 
@@ -451,7 +493,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <span className="text-xs font-semibold text-indigo-300 uppercase tracking-wider block mb-1">
               SIA 總回饋金額上限
             </span>
-            <p className="text-3xl font-extrabold text-white font-mono">$1,700,000</p>
+            <p className="text-3xl font-extrabold text-white font-mono">$1,800,000</p>
             <p className="text-xs text-indigo-200/80 mt-1.5">包含四大核心轉型與 RDS 投資方案總額</p>
           </div>
 
@@ -463,7 +505,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
               {formatCurrency(analysis.earnedCreditsTotal)}
             </p>
             <p className="text-xs text-emerald-200/80 mt-1.5">
-              達成率: {formatNumber((analysis.earnedCreditsTotal / 1700000) * 100, 1)}%
+              達成率: {formatNumber((analysis.earnedCreditsTotal / 1800000) * 100, 1)}%
             </p>
           </div>
 
@@ -512,7 +554,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                 <td className="px-3.5 py-3 text-gray-200 space-y-0.5">
                   <div>1. 前 24 個月內</div>
                   <div>2. 連續 3 個月</div>
-                  <div>3. 使用 Linux 和 Red Hat 於 EC2</div>
+                  <div>3. 使用 Linux 和 Red Hat 於 EC2 <span className="text-[11px] text-amber-300/90">(排除 NatGateway, VpcPeering, RDS, DocDB, ElastiCache, SimpleDB)</span></div>
                   <div className="font-semibold text-white">4. 每月至少 $220,000 美元 (220k)</div>
                 </td>
                 <td className="px-3.5 py-3 text-center font-mono whitespace-nowrap text-gray-300">
@@ -534,7 +576,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                 <td className="px-3.5 py-3 text-gray-200 space-y-0.5">
                   <div>1. 第 25 至 34 個月內</div>
                   <div>2. 連續 3 個月</div>
-                  <div>3. 使用 Linux 和 Red Hat 於 EC2</div>
+                  <div>3. 使用 Linux 和 Red Hat 於 EC2 <span className="text-[11px] text-amber-300/90">(排除 NatGateway, VpcPeering, RDS, DocDB, ElastiCache, SimpleDB)</span></div>
                   <div className="font-semibold text-white">4. 每月至少 $250,000 美元 (250k)</div>
                 </td>
                 <td className="px-3.5 py-3 text-center font-mono whitespace-nowrap text-gray-300">
@@ -560,8 +602,8 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                 <td className="px-3.5 py-3 text-gray-200 space-y-0.5">
                   <div>1. 合約第 2 年結束前</div>
                   <div>2. 連續 3 個月</div>
-                  <div className="font-semibold text-white">3. 至少 15% 用於 Graviton 實例</div>
-                  <div>4. 以 EC2 合計總使用小時 (NIH) 計算</div>
+                  <div className="font-semibold text-white">3. 至少 15% 用於 Graviton (*g.*) 實例</div>
+                  <div className="text-[11px] text-purple-300">4. Description 含 Instance 之 *g.* 與總量 Usages 比 (不限 Product Name)</div>
                 </td>
                 <td className="px-3.5 py-3 text-center font-mono whitespace-nowrap text-gray-300">
                   2025/07/01 - 2027/06/30
@@ -582,8 +624,8 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                 <td className="px-3.5 py-3 text-gray-200 space-y-0.5">
                   <div>1. 合約第 3 年結束前</div>
                   <div>2. 連續 3 個月</div>
-                  <div className="font-semibold text-white">3. 至少 25% 用於 Graviton 實例</div>
-                  <div>4. 以 EC2 合計總使用小時 (NIH) 計算</div>
+                  <div className="font-semibold text-white">3. 至少 25% 用於 Graviton (*g.*) 實例</div>
+                  <div className="text-[11px] text-purple-300">4. Description 含 Instance 之 *g.* 與總量 Usages 比 (不限 Product Name)</div>
                 </td>
                 <td className="px-3.5 py-3 text-center font-mono whitespace-nowrap text-gray-300">
                   2025/07/01 - 2028/04/30
@@ -598,7 +640,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
 
               {/* Table 3 - Row 1 */}
               <tr className="hover:bg-gray-800/50 transition">
-                <td className="px-3.5 py-3 font-bold text-teal-400 whitespace-nowrap" rowSpan={2}>
+                <td className="px-3.5 py-3 font-bold text-teal-400 whitespace-nowrap" rowSpan={3}>
                   Table 3: GenAI<br/>
                   <span className="text-[11px] text-gray-400 font-normal">生成式 AI 採用</span>
                 </td>
@@ -646,6 +688,29 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                 </td>
               </tr>
 
+              {/* Table 3 - Row 3 */}
+              <tr className="hover:bg-gray-800/50 transition">
+                <td className="px-3.5 py-3 text-gray-300 max-w-xs leading-relaxed">
+                  Receive investments in an amount up to 50% of Commitment-Eligible Fees incurred by End Customer for using Amazon Bedrock and/or Amazon Q Services during period from 25th to the 34th month.
+                </td>
+                <td className="px-3.5 py-3 text-gray-200 space-y-0.5">
+                  <div>1. 第 25 至 34 個月內</div>
+                  <div>2. Amazon Bedrock 和/或 Amazon Q</div>
+                  <div className="font-semibold text-white">3. 最終產生費用可獲最高 50% 投資</div>
+                </td>
+                <td className="px-3.5 py-3 text-center font-mono whitespace-nowrap text-gray-300">
+                  2027/07/01 - 2028/04/30
+                </td>
+                <td className="px-3.5 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                  上限 $100,000
+                </td>
+                <td className="px-3.5 py-3 text-center whitespace-nowrap">
+                  <span className="text-emerald-400 font-mono font-bold">
+                    {formatCurrency(analysis.genAiYear3Credit)}
+                  </span>
+                </td>
+              </tr>
+
               {/* Table 4: RDS Credits */}
               <tr className="hover:bg-gray-800/50 transition bg-amber-950/20">
                 <td className="px-3.5 py-3 font-bold text-amber-400 whitespace-nowrap">
@@ -683,7 +748,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <span className="text-gray-400 ml-2">(前24月 $300k + 第25-34月 $150k)</span>
           </div>
           <span className="text-xs text-indigo-300 bg-indigo-950/60 border border-indigo-500/40 px-3 py-1 rounded-full">
-            條件：Amazon EC2 運行於 Linux / Red Hat 作業系統之 Commitment-Eligible 費用
+            條件：Amazon EC2 運行於 Linux / Red Hat 作業系統之 Commitment-Eligible 費用 (排除 Usage Type = NatGateway, VpcPeering；排除產品 = AmazonRDS, AmazonDocDB, AmazonElastiCache, AmazonSimpleDB)
           </span>
         </div>
 
@@ -787,7 +852,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
         </div>
 
         <DetailsSection 
-          title="符合條件的 Linux / Red Hat EC2 服務明細" 
+          title="符合條件的 Linux / Red Hat EC2 服務明細 (已排除 Usage Type = NatGateway, VpcPeering 及 AmazonRDS, AmazonDocDB, AmazonElastiCache, AmazonSimpleDB)" 
           data={computeDetails} 
           onExport={() => handleExport(computeDetails, 'sia_compute_os_details')} 
         />
@@ -801,7 +866,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <span className="text-gray-400 ml-2">(合約第2年結束前 $150k + 合約第3年結束前 $150k)</span>
           </div>
           <span className="text-xs text-purple-300 bg-purple-950/60 border border-purple-500/40 px-3 py-1 rounded-full">
-            條件：以 Amazon EC2 合計總使用小時 (Normalized Instance Hours, NIH) 中 Graviton 佔比計算
+            條件：Item Description 包含 Instance 之中，*g.* Graviton 實例 Usages 總計佔比 (不限 Product Name)
           </span>
         </div>
 
@@ -814,7 +879,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   第一階段：合約第 2 年結束前 (2025/07/01 - 2027/06/30)
                 </span>
                 <p className="text-sm font-semibold text-white mt-1">
-                  連續 3 個月 Graviton EC2 時數佔比達 <span className="text-amber-300 font-mono font-bold">15%</span>
+                  連續 3 個月 Graviton 實例時數佔比達 <span className="text-amber-300 font-mono font-bold">15%</span>
                 </p>
               </div>
               <StatusBadge status={analysis.gravitonCheck1.achieved ? 'achieved' : analysis.gravitonCheck1.progress > 0 ? 'in-progress' : 'not-achieved'} />
@@ -847,7 +912,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   第二階段：合約第 3 年結束前 (2025/07/01 - 2028/04/30)
                 </span>
                 <p className="text-sm font-semibold text-white mt-1">
-                  連續 3 個月 Graviton EC2 時數佔比達 <span className="text-amber-300 font-mono font-bold">25%</span>
+                  連續 3 個月 Graviton 實例時數佔比達 <span className="text-amber-300 font-mono font-bold">25%</span>
                 </p>
               </div>
               <StatusBadge status={analysis.gravitonCheck2.achieved ? 'achieved' : analysis.gravitonCheck2.progress > 0 ? 'in-progress' : 'not-achieved'} />
@@ -876,7 +941,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
         {/* Chart */}
         <div className="mt-6">
           <div className="flex justify-between items-center mb-2">
-            <h4 className="text-sm font-semibold text-white">月度 EC2 總時數 vs Graviton 時數與使用率佔比</h4>
+            <h4 className="text-sm font-semibold text-white">月度實例總用量 (Instance Usages) vs Graviton 時數與使用率佔比</h4>
             <div className="flex items-center gap-3 text-xs text-gray-400">
               <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-amber-400 inline-block"></span> 15% 門檻 (Year 2)</span>
               <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-emerald-400 inline-block"></span> 25% 門檻 (Year 3)</span>
@@ -907,15 +972,15 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
                   labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '4px' }} 
                   labelFormatter={(label) => `計費月份: ${label}`}
                   formatter={(value: number, name: string) => [
-                    name.includes('佔比') ? `${formatNumber(value, 2)}%` : `${formatInteger(value)} 小時 (hrs)`, 
+                    name.includes('佔比') ? `${formatNumber(value, 2)}%` : `${formatNumber(value, 0)} (Usages)`, 
                     name
                   ]} 
                 />
                 <Legend wrapperStyle={{ color: '#f3f4f6', paddingTop: '6px' }} />
                 <ReferenceLine yAxisId="right" y={15} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: '15% 門檻', fill: '#f59e0b', fontSize: 11, position: 'insideTopRight' }} />
                 <ReferenceLine yAxisId="right" y={25} stroke="#10b981" strokeDasharray="4 4" label={{ value: '25% 門檻', fill: '#10b981', fontSize: 11, position: 'insideTopRight' }} />
-                <Bar yAxisId="left" dataKey="totalEc2Usage" name="EC2 總使用小時" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="left" dataKey="gravitonUsage" name="Graviton 實例時數" fill="#c084fc" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="left" dataKey="totalEc2Usage" name="實例總用量 (分母: 含 Instance)" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="left" dataKey="gravitonUsage" name="Graviton (*g.*) 實例用量 (分子)" fill="#c084fc" radius={[4, 4, 0, 0]} />
                 <Line yAxisId="right" type="monotone" dataKey="gravitonPercentage" name="Graviton 佔比 (%)" stroke="#4ade80" strokeWidth={3} activeDot={{ r: 6 }} />
               </ComposedChart>
             </ResponsiveContainer>
@@ -923,7 +988,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
         </div>
 
         <DetailsSection 
-          title="符合條件的 Graviton 實例服務明細" 
+          title="符合條件的 Graviton (*g.*) 實例服務明細 (Item Description 包含 Instance 且為 *g.*，不限 Product Name)" 
           data={gravitonDetails} 
           onExport={() => handleExport(gravitonDetails, 'sia_graviton_details')} 
         />
@@ -933,21 +998,21 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
       <Card title="Table 3 : Generative AI Adoption Investment ( 生成式AI )">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
           <div className="text-xs text-gray-300">
-            總計可得 Credits: <span className="font-bold text-emerald-400 text-sm font-mono">$150,000 USD</span>
-            <span className="text-gray-400 ml-2">(前12月上限 $50k + 第13-24月上限 $100k)</span>
+            總計可得 Credits: <span className="font-bold text-emerald-400 text-sm font-mono">$250,000 USD</span>
+            <span className="text-gray-400 ml-2">(前12月上限 $50k + 第13-24月上限 $100k + 第25-34月上限 $100k)</span>
           </div>
           <span className="text-xs text-teal-300 bg-teal-950/60 border border-teal-500/40 px-3 py-1 rounded-full">
             條件：Amazon Bedrock 和/或 Amazon Q Services 最終產生費用可獲最高 50% 投資回饋
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* GenAI Item 1 */}
           <div className="p-4 bg-gray-800/80 border border-gray-700/80 rounded-xl space-y-2">
             <div className="flex justify-between items-start">
               <div>
                 <span className="text-xs font-bold text-teal-300 uppercase tracking-wider block">
-                  第 1 年度：前 12 個月內 (2025/07/01 - 2026/06/30)
+                  第一階段：前 12 個月內 (2025/07/01 - 2026/06/30)
                 </span>
                 <p className="text-sm font-semibold text-white mt-1">
                   Amazon Bedrock / Amazon Q 費用之 <span className="text-emerald-400 font-bold">50% 投資</span> (上限 $50,000)
@@ -979,7 +1044,7 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
             <div className="flex justify-between items-start">
               <div>
                 <span className="text-xs font-bold text-teal-300 uppercase tracking-wider block">
-                  第 2 年度：第 13 至 24 個月內 (2026/07/01 - 2027/06/30)
+                  第二階段：第 13 至 24 個月內 (2026/07/01 - 2027/06/30)
                 </span>
                 <p className="text-sm font-semibold text-white mt-1">
                   Amazon Bedrock / Amazon Q 費用之 <span className="text-emerald-400 font-bold">50% 投資</span> (上限 $100,000)
@@ -1002,6 +1067,38 @@ const SiaReportTab: React.FC<{ data: BillingData }> = ({ data }) => {
               <div className="flex justify-between text-teal-300 border-t border-gray-700/60 pt-1 font-sans">
                 <span className="font-semibold">此階段預估可獲 Credits:</span>
                 <span className="font-mono font-extrabold text-sm">{formatCurrency(analysis.genAiYear2Credit)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* GenAI Item 3 */}
+          <div className="p-4 bg-gray-800/80 border border-gray-700/80 rounded-xl space-y-2">
+            <div className="flex justify-between items-start">
+              <div>
+                <span className="text-xs font-bold text-teal-300 uppercase tracking-wider block">
+                  第三階段：第 25 至 34 個月內 (2027/07/01 - 2028/04/30)
+                </span>
+                <p className="text-sm font-semibold text-white mt-1">
+                  Amazon Bedrock / Amazon Q 費用之 <span className="text-emerald-400 font-bold">50% 投資</span> (上限 $100,000)
+                </p>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-300 bg-emerald-950/80 px-2 py-1 rounded border border-emerald-500/40">
+                上限 $100,000
+              </span>
+            </div>
+
+            <div className="pt-2 bg-gray-900/60 p-3 rounded-lg space-y-1.5 font-mono text-xs">
+              <div className="flex justify-between text-gray-400">
+                <span>期間累計 GenAI 費用:</span>
+                <span className="text-white font-bold">{formatCurrency(analysis.genAiYear3Cost)}</span>
+              </div>
+              <div className="flex justify-between text-emerald-400">
+                <span>50% 投資試算 (未達上限以 50% 計):</span>
+                <span className="font-bold">{formatCurrency(analysis.genAiYear3Cost * 0.5)}</span>
+              </div>
+              <div className="flex justify-between text-teal-300 border-t border-gray-700/60 pt-1 font-sans">
+                <span className="font-semibold">此階段預估可獲 Credits:</span>
+                <span className="font-mono font-extrabold text-sm">{formatCurrency(analysis.genAiYear3Credit)}</span>
               </div>
             </div>
           </div>
